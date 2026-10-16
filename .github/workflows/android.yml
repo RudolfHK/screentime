@@ -31,7 +31,6 @@ jobs:
 
       - name: Lint
         run: ./gradlew :app:lintDebug
-        continue-on-error: true
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
