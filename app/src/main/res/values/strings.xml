@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Screentime Diagnostics</string>
+    <string name="notification_service_label">Screentime notification counter</string>
+    <string name="widget_label">Screen time today</string>
+    <string name="widget_description">Today\'s screen time, unlocks and goal progress</string>
+</resources>

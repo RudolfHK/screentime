@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 108dp adaptive icon foreground: a clock arc with a pulse line. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M54,30 A24,24 0 1,1 30.2,57"
+        android:strokeWidth="4.5"
+        android:strokeColor="#FF4FD1FF"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M36,56 L45,56 L49,46 L55,64 L59,52 L63,56 L72,56"
+        android:strokeWidth="3.5"
+        android:strokeColor="#FFE8ECF2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>
