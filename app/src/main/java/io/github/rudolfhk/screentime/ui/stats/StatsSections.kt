@@ -1,0 +1,493 @@
+package io.github.rudolfhk.screentime.ui.stats
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import io.github.rudolfhk.screentime.core.AppCategories
+import io.github.rudolfhk.screentime.core.Format
+import io.github.rudolfhk.screentime.core.Granularity
+import io.github.rudolfhk.screentime.core.Stats
+import io.github.rudolfhk.screentime.core.Summary
+import io.github.rudolfhk.screentime.core.TimeRanges
+import io.github.rudolfhk.screentime.data.AppInfoEntity
+import io.github.rudolfhk.screentime.ui.components.AppRankRow
+import io.github.rudolfhk.screentime.ui.components.BarChart
+import io.github.rudolfhk.screentime.ui.components.DataRow
+import io.github.rudolfhk.screentime.ui.components.DeltaBadge
+import io.github.rudolfhk.screentime.ui.components.DistBar
+import io.github.rudolfhk.screentime.ui.components.Divider
+import io.github.rudolfhk.screentime.ui.components.EmptyHint
+import io.github.rudolfhk.screentime.ui.components.Heatmap
+import io.github.rudolfhk.screentime.ui.components.HorizontalBars
+import io.github.rudolfhk.screentime.ui.components.MetricGrid
+import io.github.rudolfhk.screentime.ui.components.MetricTile
+import io.github.rudolfhk.screentime.ui.components.Panel
+import io.github.rudolfhk.screentime.ui.components.ProportionBar
+import io.github.rudolfhk.screentime.ui.components.SegmentedControl
+import io.github.rudolfhk.screentime.ui.components.StackedShareBar
+import io.github.rudolfhk.screentime.ui.components.StatusDot
+import io.github.rudolfhk.screentime.ui.theme.LabelStyle
+import io.github.rudolfhk.screentime.ui.theme.MetaStyle
+import io.github.rudolfhk.screentime.ui.theme.NumberStyle
+import io.github.rudolfhk.screentime.ui.theme.Palette
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
+private val NoPadding = PaddingValues(0.dp)
+private const val MIN_UNTRACKED_MS = 5 * 60_000L
+
+// ---------------------------------------------------------------------------------------------
+// Overview
+// ---------------------------------------------------------------------------------------------
+
+@Composable
+fun SummaryPanel(stats: Stats, previous: Summary?, countNotifications: Boolean) {
+    val s = stats.summary
+    val p = previous
+    val i = stats.insights
+    val notif = if (countNotifications) s.notifications.toString() else "off"
+    val notifDelta = p?.takeIf { countNotifications }?.let { Format.delta(s.notifications.toLong(), it.notifications.toLong()) }
+    Panel(if (stats.filtered) "Selected apps" else "Summary", subtitle = if (p != null) "Change vs. previous period" else null, contentPadding = NoPadding) {
+        val items: List<@Composable (Modifier) -> Unit> = if (stats.filtered) listOf(
+            { m -> MetricTile("App time", Format.duration(s.appTime), m, delta = p?.let { Format.delta(s.appTime, it.appTime) }, large = true) },
+            { m -> MetricTile("Avg / day", Format.duration(s.avgPerDay), m, delta = p?.let { Format.delta(s.avgPerDay, it.avgPerDay) }, large = true) },
+            { m -> MetricTile("Launches", s.appLaunches.toString(), m, delta = p?.let { Format.delta(s.appLaunches.toLong(), it.appLaunches.toLong()) }) },
+            { m -> MetricTile("Avg session", Format.durationPrecise(if (s.appLaunches > 0) s.appTime / s.appLaunches else 0), m) },
+            { m -> MetricTile("Notifications", notif, m, delta = notifDelta) },
+            { m -> MetricTile("Share of screen", if (s.screenTime > 0) Format.percent(s.appTime.toDouble() / s.screenTime) else "–", m, caption = "of ${Format.duration(s.screenTime)}") },
+        ) else listOf(
+            { m -> MetricTile("Screen time", Format.duration(s.screenTime), m, delta = p?.let { Format.delta(s.screenTime, it.screenTime) }, large = true) },
+            { m -> MetricTile("Avg / day", Format.duration(s.avgPerDay), m, delta = p?.let { Format.delta(s.avgPerDay, it.avgPerDay) }, large = true) },
+            { m -> MetricTile("Unlocks", s.unlocks.toString(), m, delta = p?.let { Format.delta(s.unlocks.toLong(), it.unlocks.toLong()) }) },
+            { m -> MetricTile("Unlocks / day", "%.1f".format(i.avgUnlocksPerDay), m, caption = "${i.trackedDays} tracked days") },
+            { m -> MetricTile("Avg session", Format.durationPrecise(s.avgSession), m, delta = p?.let { Format.delta(s.avgSession, it.avgSession) }) },
+            { m -> MetricTile("Longest session", Format.durationPrecise(stats.longestSession), m, caption = "median ${Format.durationPrecise(stats.medianSession)}") },
+            { m -> MetricTile("Glances", s.glances.toString(), m, caption = "of ${s.wakes} screen wakes") },
+            { m -> MetricTile("Notifications", notif, m, delta = notifDelta) },
+            { m -> MetricTile("Screen on", Format.duration(s.screenOnTime), m, caption = "incl. lock screen") },
+            { m -> MetricTile("App time", Format.duration(s.appTime), m, caption = "${s.appLaunches} launches") },
+        )
+        MetricGrid(items)
+    }
+}
+
+@Composable
+fun TrendPanel(stats: Stats, goalMs: Long) {
+    var showUnlocks by remember { mutableStateOf(false) }
+    val zone = ZoneId.systemDefault()
+    val unit = when (stats.granularity) {
+        Granularity.HOUR -> "per hour"
+        Granularity.DAY -> "per day"
+        Granularity.WEEK -> "per week"
+        Granularity.MONTH -> "per month"
+    }
+    Panel(
+        "Trend",
+        subtitle = unit,
+        trailing = {
+            if (!stats.filtered) {
+                SegmentedControl(listOf(false to "Time", true to "Unlocks"), showUnlocks, { showUnlocks = it }, Modifier.width(150.dp), compact = true)
+            }
+        },
+    ) {
+        val labels = stats.buckets.map { TimeRanges.bucketLabel(it.start, stats.granularity, zone) }
+        val detail = stats.buckets.map { b ->
+            val z = Instant.ofEpochMilli(b.start).atZone(zone)
+            when (stats.granularity) {
+                Granularity.HOUR -> DateTimeFormatter.ofPattern("HH:00").format(z)
+                Granularity.DAY -> DateTimeFormatter.ofPattern("EEE d MMM").format(z)
+                Granularity.WEEK -> "Week of " + DateTimeFormatter.ofPattern("d MMM").format(z)
+                Granularity.MONTH -> DateTimeFormatter.ofPattern("MMMM yyyy").format(z)
+            }
+        }
+        val now = System.currentTimeMillis()
+        val current = stats.buckets.indexOfFirst { now >= it.start && now < it.end }.takeIf { it >= 0 }
+        if (showUnlocks && !stats.filtered) {
+            BarChart(stats.buckets.map { it.unlocks.toLong() }, labels, { "$it" }, color = Palette.Steel, highlight = current, detailLabels = detail)
+        } else {
+            BarChart(
+                values = stats.buckets.map { if (stats.filtered) it.appTime else it.screenTime },
+                labels = labels,
+                format = Format::duration,
+                goal = goalMs.takeIf { it > 0 && stats.granularity == Granularity.DAY && !stats.filtered },
+                highlight = current,
+                detailLabels = detail,
+            )
+        }
+        if (goalMs > 0 && !stats.filtered && stats.granularity != Granularity.HOUR) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Goal exceeded on ${stats.daysOverGoal} of ${stats.days.size} days",
+                style = MetaStyle.copy(color = Palette.TextDim),
+            )
+        }
+    }
+}
+
+/** Side-by-side table of this period vs. the previous one. */
+@Composable
+fun ComparisonPanel(stats: Stats, previous: Summary?) {
+    if (previous == null) return
+    val s = stats.summary
+    data class Line(val label: String, val now: Long, val prev: Long, val fmt: (Long) -> String, val increaseIsBad: Boolean = true)
+    val lines = if (stats.filtered) listOf(
+        Line("App time", s.appTime, previous.appTime, Format::duration),
+        Line("Launches", s.appLaunches.toLong(), previous.appLaunches.toLong(), { "$it" }),
+        Line("Avg / day", s.avgPerDay, previous.avgPerDay, Format::duration),
+        Line("Notifications", s.notifications.toLong(), previous.notifications.toLong(), { "$it" }),
+    ) else listOf(
+        Line("Screen time", s.screenTime, previous.screenTime, Format::duration),
+        Line("Avg / day", s.avgPerDay, previous.avgPerDay, Format::duration),
+        Line("Unlocks", s.unlocks.toLong(), previous.unlocks.toLong(), { "$it" }),
+        Line("Avg session", s.avgSession, previous.avgSession, Format::durationPrecise),
+        Line("Glances", s.glances.toLong(), previous.glances.toLong(), { "$it" }),
+        Line("Notifications", s.notifications.toLong(), previous.notifications.toLong(), { "$it" }),
+    )
+    Panel("Period comparison", subtitle = "This period vs. the one before", contentPadding = NoPadding) {
+        TableHeader(listOf("Metric" to 1.4f, "Now" to 1f, "Prev." to 1f, "Δ" to 0.9f))
+        lines.forEachIndexed { idx, l ->
+            if (idx > 0) Divider()
+            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(l.label, fontSize = 13.sp, color = Palette.Text, modifier = Modifier.weight(1.4f))
+                Text(l.fmt(l.now), style = NumberStyle.copy(fontSize = 13.sp), modifier = Modifier.weight(1f))
+                Text(l.fmt(l.prev), style = NumberStyle.copy(fontSize = 13.sp, color = Palette.TextDim), modifier = Modifier.weight(1f))
+                Row(Modifier.weight(0.9f)) { Format.delta(l.now, l.prev)?.let { DeltaBadge(it, l.increaseIsBad) } ?: Text("–", style = MetaStyle) }
+            }
+        }
+    }
+}
+
+@Composable
+fun CoveragePanel(stats: Stats) {
+    val c = stats.coverage
+    val zone = ZoneId.systemDefault()
+    val df = DateTimeFormatter.ofPattern("d MMM HH:mm")
+    Panel("Data quality", subtitle = "How complete these numbers are") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(if (c.elapsedMs > 0) Format.percent(c.ratio) else "–", style = NumberStyle.copy(fontSize = 22.sp, color = if (c.ratio >= 0.95) Palette.Good else Palette.Warn))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("TRACKING COVERAGE", style = LabelStyle)
+                Text("${Format.duration(c.trackedMs)} of ${Format.duration(c.elapsedMs)} recorded", style = MetaStyle)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        ProportionBar(c.ratio.toFloat(), if (c.ratio >= 0.95) Palette.Good else Palette.Warn, height = 4.dp)
+        val untracked = c.untracked.filter { it.duration > MIN_UNTRACKED_MS }
+        if (untracked.isNotEmpty() || c.dataGaps.isNotEmpty()) Spacer(Modifier.height(10.dp))
+        if (untracked.isNotEmpty()) {
+            DataRow("Tracking off", Format.duration(untracked.sumOf { it.duration }), hint = "${untracked.size} span(s) in this period")
+        }
+        c.dataGaps.take(5).forEach {
+            DataRow(
+                "Data gap",
+                Format.duration(it.end - it.start),
+                hint = df.format(Instant.ofEpochMilli(it.start).atZone(zone)) + " → " + df.format(Instant.ofEpochMilli(it.end).atZone(zone)),
+                valueColor = Palette.Warn,
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Apps
+// ---------------------------------------------------------------------------------------------
+
+@Composable
+fun CategoryPanel(stats: Stats, onSelectCategory: (Int) -> Unit) {
+    if (stats.categories.isEmpty()) return
+    val total = stats.categories.sumOf { it.total }.coerceAtLeast(1)
+    val colorOf = { i: Int -> Palette.series[i % Palette.series.size] }
+    Panel("Category mix", subtitle = "Tap a category to filter") {
+        StackedShareBar(stats.categories.mapIndexed { i, c -> c.total.toFloat() to colorOf(i) })
+        Spacer(Modifier.height(10.dp))
+        stats.categories.forEachIndexed { i, c ->
+            Row(
+                Modifier.fillMaxWidth().clickable { onSelectCategory(c.category) }.padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StatusDot(colorOf(i))
+                Spacer(Modifier.width(10.dp))
+                Text(AppCategories.label(c.category), fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text("${c.apps} apps", style = MetaStyle, modifier = Modifier.width(56.dp))
+                Text(Format.percent(c.total.toDouble() / total), style = MetaStyle.copy(color = Palette.TextDim), modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
+                Text(Format.duration(c.total), style = NumberStyle.copy(fontSize = 13.sp), modifier = Modifier.width(70.dp), textAlign = TextAlign.End)
+            }
+        }
+    }
+}
+
+enum class AppSort(val label: String) { TIME("Time"), LAUNCHES("Opens"), NOTIFICATIONS("Notif.") }
+
+@Composable
+fun AppRankingPanel(stats: Stats, apps: Map<String, AppInfoEntity>, onOpenApp: (String) -> Unit) {
+    var sort by remember { mutableStateOf(AppSort.TIME) }
+    var showAll by remember { mutableStateOf(false) }
+    val sorted = when (sort) {
+        AppSort.TIME -> stats.apps
+        AppSort.LAUNCHES -> stats.apps.sortedByDescending { it.launches }
+        AppSort.NOTIFICATIONS -> stats.apps.sortedByDescending { it.notifications }
+    }
+    val total = stats.apps.sumOf { it.total }.coerceAtLeast(1)
+    val maxMetric = sorted.maxOfOrNull {
+        when (sort) {
+            AppSort.TIME -> it.total
+            AppSort.LAUNCHES -> it.launches.toLong()
+            AppSort.NOTIFICATIONS -> it.notifications.toLong()
+        }
+    }?.coerceAtLeast(1) ?: 1
+    Panel(
+        "App ranking",
+        subtitle = "${stats.apps.size} apps · ${Format.duration(total)} total",
+        trailing = { SegmentedControl(AppSort.entries.map { it to it.label }, sort, { sort = it }, Modifier.width(186.dp), compact = true) },
+        contentPadding = PaddingValues(top = 6.dp, bottom = 4.dp),
+    ) {
+        if (sorted.isEmpty()) EmptyHint("No app usage in this period.", Modifier.padding(horizontal = 14.dp))
+        val shown = if (showAll) sorted else sorted.take(15)
+        shown.forEachIndexed { idx, a ->
+            if (idx > 0) Divider(Modifier.padding(start = 14.dp))
+            val metric = when (sort) {
+                AppSort.TIME -> a.total
+                AppSort.LAUNCHES -> a.launches.toLong()
+                AppSort.NOTIFICATIONS -> a.notifications.toLong()
+            }
+            AppRankRow(
+                rank = idx + 1,
+                packageName = a.packageName,
+                label = apps[a.packageName]?.label ?: a.packageName,
+                value = when (sort) {
+                    AppSort.TIME -> Format.duration(a.total)
+                    AppSort.LAUNCHES -> "${a.launches}×"
+                    AppSort.NOTIFICATIONS -> "${a.notifications}"
+                },
+                fraction = metric.toFloat() / maxMetric,
+                share = Format.percent(a.total.toDouble() / total),
+                meta = "${Format.duration(a.total)} · ${a.launches} opens · ⌀ ${Format.durationPrecise(a.avgSession)}" +
+                    (if (a.notifications > 0) " · ${a.notifications} notif." else ""),
+                onClick = { onOpenApp(a.packageName) },
+            )
+        }
+        if (sorted.size > 15) {
+            Divider()
+            Text(
+                if (showAll) "SHOW TOP 15" else "SHOW ALL ${sorted.size}",
+                style = LabelStyle.copy(color = Palette.Accent),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().clickable { showAll = !showAll }.padding(vertical = 12.dp),
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Patterns
+// ---------------------------------------------------------------------------------------------
+
+@Composable
+fun HourlyPanel(stats: Stats) {
+    val peak = stats.insights.peakHour
+    Panel("Hour of day", subtitle = if (peak != null) "Peak at ${peak.toString().padStart(2, '0')}:00" else "Total use per hour") {
+        BarChart(
+            values = stats.hourly.toList(),
+            labels = (0 until 24).map { it.toString().padStart(2, '0') },
+            detailLabels = (0 until 24).map { "${it.toString().padStart(2, '0')}:00 – ${(it + 1).toString().padStart(2, '0')}:00" },
+            format = Format::duration,
+            highlight = peak,
+            height = 130,
+            totalLabel = null,
+        )
+        Spacer(Modifier.height(8.dp))
+        DataRow(
+            "Night-time use", Format.duration(stats.nightTime),
+            hint = "23:00 – 05:00" + if (stats.summary.screenTime > 0 && !stats.filtered) " · ${Format.percent(stats.nightTime.toDouble() / stats.summary.screenTime)} of total" else "",
+        )
+    }
+}
+
+@Composable
+fun HeatmapPanel(stats: Stats) {
+    Panel("Weekly rhythm", subtitle = "Weekday × hour") {
+        if (stats.heatmap.all { row -> row.all { it == 0L } }) EmptyHint("No usage in this period.")
+        else Heatmap(stats.heatmap)
+    }
+}
+
+@Composable
+fun WeekdayPanel(stats: Stats) {
+    val i = stats.insights
+    if (stats.days.size < 2) return
+    Panel("Weekday averages", subtitle = "Average per tracked day") {
+        BarChart(
+            values = i.weekdayAverages.toList(),
+            labels = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"),
+            detailLabels = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
+            format = Format::duration,
+            color = Palette.Accent,
+            height = 120,
+            showFooter = false,
+        )
+        Spacer(Modifier.height(8.dp))
+        HorizontalBars(
+            listOf(
+                DistBar("Weekdays", i.weekdayAvg.toFloat(), Format.duration(i.weekdayAvg), "per day"),
+                DistBar("Weekend", i.weekendAvg.toFloat(), Format.duration(i.weekendAvg), "per day"),
+            ),
+            colors = listOf(Palette.Accent, Palette.Steel),
+        )
+    }
+}
+
+@Composable
+fun HabitsPanel(stats: Stats) {
+    val zone = ZoneId.systemDefault()
+    val tf = DateTimeFormatter.ofPattern("EEE HH:mm")
+    Panel("Habits", contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)) {
+        if (!stats.filtered) {
+            DataRow("Avg first unlock", stats.avgFirstUseMinute?.let(Format::minuteOfDay) ?: "–", hint = "When your phone day starts")
+            Divider()
+            DataRow("Avg last use", stats.avgLastUseMinute?.let(Format::minuteOfDay) ?: "–", hint = "Last screen-off after an unlock")
+            Divider()
+        }
+        DataRow("Median session", Format.durationPrecise(stats.medianSession))
+        Divider()
+        DataRow("Longest session", Format.durationPrecise(stats.longestSession))
+        Divider()
+        DataRow("Median gap between uses", Format.durationPrecise(stats.medianGapBetweenUnlocks), hint = "Screen-off → next unlock")
+        Divider()
+        DataRow(
+            "Longest phone-free stretch",
+            stats.longestBreak?.let { Format.duration(it.duration) } ?: "–",
+            hint = stats.longestBreak?.let {
+                tf.format(Instant.ofEpochMilli(it.start).atZone(zone)) + " → " + tf.format(Instant.ofEpochMilli(it.end).atZone(zone))
+            },
+        )
+    }
+}
+
+@Composable
+fun SessionLengthPanel(stats: Stats) {
+    val total = stats.sessionDistribution.sumOf { it.count }
+    Panel("Session lengths", subtitle = if (total > 0) "$total sessions" else null) {
+        if (total == 0) {
+            EmptyHint("No sessions in this period.")
+            return@Panel
+        }
+        HorizontalBars(
+            stats.sessionDistribution.map {
+                DistBar(it.label, it.count.toFloat(), "${it.count}", Format.percent(it.count.toDouble() / total))
+            },
+            labelWidth = 64,
+            valueWidth = 48,
+        )
+        Spacer(Modifier.height(12.dp))
+        val short = stats.sessionDistribution.take(3).sumOf { it.count }
+        val longTime = stats.sessionDistribution.drop(5).sumOf { it.total }
+        val allTime = stats.sessionDistribution.sumOf { it.total }.coerceAtLeast(1)
+        DataRow("Quick checks (< 1 min)", Format.percent(short.toDouble() / total), hint = "Share of sessions")
+        DataRow("Long sessions (> 15 min)", Format.percent(longTime.toDouble() / allTime), hint = "Share of total time")
+    }
+}
+
+@Composable
+fun GoalPanel(stats: Stats, goalMs: Long) {
+    if (goalMs <= 0 || stats.filtered) return
+    val i = stats.insights
+    Panel("Daily goal", subtitle = "Limit ${Format.duration(goalMs)} per day", contentPadding = NoPadding) {
+        MetricGrid(
+            listOf(
+                { m -> MetricTile("Current streak", "${i.currentGoalStreak} d", m, caption = "days within goal", valueColor = if (i.currentGoalStreak > 0) Palette.Good else Palette.Text) },
+                { m -> MetricTile("Best streak", "${i.bestGoalStreak} d", m, caption = "in this period") },
+                { m -> MetricTile("Over goal", "${stats.daysOverGoal} d", m, caption = "of ${stats.days.size} days", valueColor = if (stats.daysOverGoal > 0) Palette.Bad else Palette.Text) },
+                { m -> MetricTile("Avg vs goal", Format.percent(stats.summary.avgPerDay.toDouble() / goalMs), m, caption = "${Format.duration(stats.summary.avgPerDay)} / day") },
+            ),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Days
+// ---------------------------------------------------------------------------------------------
+
+@Composable
+fun HighlightsPanel(stats: Stats) {
+    val i = stats.insights
+    val df = DateTimeFormatter.ofPattern("EEE d MMM")
+    Panel("Highlights", contentPadding = NoPadding) {
+        MetricGrid(
+            listOf(
+                { m -> MetricTile("Busiest day", i.busiestDay?.let { Format.duration(it.screenTime) } ?: "–", m, caption = i.busiestDay?.date?.let(df::format), valueColor = Palette.Accent) },
+                { m -> MetricTile("Quietest day", i.quietestDay?.let { Format.duration(it.screenTime) } ?: "–", m, caption = i.quietestDay?.date?.let(df::format), valueColor = Palette.Good) },
+                { m -> MetricTile("Tracked days", "${i.trackedDays}", m, caption = "in this period") },
+                { m -> MetricTile("Avg / day", Format.duration(stats.summary.avgPerDay), m, caption = "%.1f unlocks / day".format(i.avgUnlocksPerDay)) },
+            ),
+        )
+    }
+}
+
+@Composable
+fun DailyLogPanel(stats: Stats, goalMs: Long) {
+    var showAll by remember { mutableStateOf(false) }
+    val days = stats.days.reversed()
+    val maxT = days.maxOfOrNull { it.screenTime }?.coerceAtLeast(1) ?: 1
+    val df = DateTimeFormatter.ofPattern("EEE dd.MM")
+    Panel("Daily log", subtitle = "Newest first", contentPadding = PaddingValues(bottom = 4.dp)) {
+        TableHeader(listOf("Date" to 1.25f, "Time" to 1.15f, "Unl." to 0.6f, "First" to 0.75f, "Last" to 0.75f))
+        val shown = if (showAll) days else days.take(31)
+        shown.forEachIndexed { idx, d ->
+            if (idx > 0) Divider()
+            val over = goalMs > 0 && d.screenTime > goalMs
+            Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(df.format(d.date), style = MetaStyle.copy(color = Palette.Text, fontSize = 12.sp), modifier = Modifier.weight(1.25f))
+                    Text(Format.duration(d.screenTime), style = NumberStyle.copy(fontSize = 13.sp, color = if (over) Palette.Bad else Palette.Text), modifier = Modifier.weight(1.15f))
+                    Text("${d.unlocks}", style = NumberStyle.copy(fontSize = 12.sp, color = Palette.TextDim), modifier = Modifier.weight(0.6f))
+                    Text(d.firstUseMinute?.let(Format::minuteOfDay) ?: "–", style = MetaStyle.copy(fontSize = 12.sp, color = Palette.TextDim), modifier = Modifier.weight(0.75f))
+                    Text(d.lastUseMinute?.let(Format::minuteOfDay) ?: "–", style = MetaStyle.copy(fontSize = 12.sp, color = Palette.TextDim), modifier = Modifier.weight(0.75f))
+                }
+                Spacer(Modifier.height(5.dp))
+                ProportionBar(d.screenTime.toFloat() / maxT, if (over) Palette.Bad else Palette.Accent, height = 2.dp)
+            }
+        }
+        if (days.size > 31) {
+            Divider()
+            Text(
+                if (showAll) "SHOW LAST 31 DAYS" else "SHOW ALL ${days.size} DAYS",
+                style = LabelStyle.copy(color = Palette.Accent),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().clickable { showAll = !showAll }.padding(vertical = 12.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun TableHeader(columns: List<Pair<String, Float>>) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(top = 4.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.Start,
+    ) {
+        columns.forEach { (label, w) ->
+            Text(label.uppercase(), style = LabelStyle.copy(fontSize = 9.sp, color = Palette.TextFaint), modifier = Modifier.weight(w))
+        }
+    }
+    Divider()
+}

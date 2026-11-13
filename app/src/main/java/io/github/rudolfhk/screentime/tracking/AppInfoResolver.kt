@@ -46,6 +46,10 @@ class AppInfoResolver(private val context: Context) {
         } catch (e: PackageManager.NameNotFoundException) {
             missing += packageName
             null
+        } catch (e: RuntimeException) {
+            // Some packages expose broken or unrenderable icons; fall back to the letter tile.
+            missing += packageName
+            null
         }
     }
 

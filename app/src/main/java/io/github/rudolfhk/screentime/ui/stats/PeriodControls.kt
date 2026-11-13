@@ -1,15 +1,18 @@
 package io.github.rudolfhk.screentime.ui.stats
 
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -32,7 +35,8 @@ import io.github.rudolfhk.screentime.core.PeriodSelection
 import io.github.rudolfhk.screentime.core.RangeKind
 import io.github.rudolfhk.screentime.core.TimeRange
 import io.github.rudolfhk.screentime.core.TimeRanges
-import io.github.rudolfhk.screentime.ui.components.Pill
+import io.github.rudolfhk.screentime.ui.components.ControlShape
+import io.github.rudolfhk.screentime.ui.components.SegmentedControl
 import io.github.rudolfhk.screentime.ui.theme.NumberStyle
 import io.github.rudolfhk.screentime.ui.theme.Palette
 import java.time.Instant
@@ -40,7 +44,15 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
 
-/** Day / Week / Month / All / Custom selector plus ‹ period › navigation. */
+private val KINDS = listOf(
+    RangeKind.DAY to "Day",
+    RangeKind.WEEK to "Week",
+    RangeKind.MONTH to "Month",
+    RangeKind.ALL to "All",
+    RangeKind.CUSTOM to "Custom",
+)
+
+/** Period kind selector plus a ‹ period › stepper bar. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PeriodControls(
@@ -54,35 +66,41 @@ fun PeriodControls(
     val today = LocalDate.now(zone)
 
     Column(modifier) {
+        SegmentedControl(
+            options = KINDS,
+            selected = selection.kind,
+            onSelect = { kind ->
+                if (kind == RangeKind.CUSTOM) showPicker = true
+                else onSelect(PeriodSelection(kind, if (selection.kind == RangeKind.ALL || selection.kind == RangeKind.CUSTOM) today else selection.anchor))
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        val prev = TimeRanges.shift(selection, -1)
+        val next = TimeRanges.shift(selection, 1)
+        val nextAllowed = next != null && range != null && range.end <= System.currentTimeMillis()
         Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Modifier
+                .fillMaxWidth()
+                .border(1.dp, Palette.Outline, ControlShape)
+                .background(Palette.Surface, ControlShape),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            listOf(RangeKind.DAY to "Day", RangeKind.WEEK to "Week", RangeKind.MONTH to "Month", RangeKind.ALL to "All time", RangeKind.CUSTOM to "Custom")
-                .forEach { (kind, label) ->
-                    Pill(label, selection.kind == kind) {
-                        if (kind == RangeKind.CUSTOM) showPicker = true
-                        else onSelect(PeriodSelection(kind, if (selection.kind == RangeKind.ALL) today else selection.anchor))
-                    }
-                }
-        }
-        if (range != null) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                val prev = TimeRanges.shift(selection, -1)
-                val next = TimeRanges.shift(selection, 1)
-                val nextAllowed = next != null && range.end <= System.currentTimeMillis()
-                IconButton(onClick = { prev?.let(onSelect) }, enabled = prev != null) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous period", tint = if (prev != null) Palette.Text else Palette.TextFaint)
-                }
-                Text(
-                    TimeRanges.label(selection, range, zone, today),
-                    style = NumberStyle.copy(fontSize = 14.sp),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(onClick = { next?.let(onSelect) }, enabled = nextAllowed) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next period", tint = if (nextAllowed) Palette.Text else Palette.TextFaint)
-                }
+            IconButton(onClick = { prev?.let(onSelect) }, enabled = prev != null) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous period", tint = if (prev != null) Palette.Text else Palette.TextFaint)
+            }
+            Text(
+                range?.let { TimeRanges.label(selection, it, zone, today) } ?: "…",
+                style = NumberStyle.copy(fontSize = 13.sp),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = { showPicker = true }) {
+                Icon(Icons.Filled.DateRange, "Pick custom range", tint = Palette.TextDim)
+            }
+            IconButton(onClick = { next?.let(onSelect) }, enabled = nextAllowed) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next period", tint = if (nextAllowed) Palette.Text else Palette.TextFaint)
             }
         }
     }
@@ -103,13 +121,24 @@ fun PeriodControls(
                         if (s != null) onSelect(PeriodSelection(RangeKind.CUSTOM, s, s, e))
                         showPicker = false
                     },
-                ) { Text("Apply", color = Palette.Accent) }
+                ) { Text("APPLY", color = Palette.Accent) }
             },
-            dismissButton = { TextButton(onClick = { showPicker = false }) { Text("Cancel", color = Palette.TextDim) } },
+            dismissButton = { TextButton(onClick = { showPicker = false }) { Text("CANCEL", color = Palette.TextDim) } },
+            shape = ControlShape,
+            colors = DatePickerDefaults.colors(containerColor = Palette.Surface),
         ) {
-            DateRangePicker(state = state, modifier = Modifier.fillMaxWidth(), title = {
-                Text("Select range", modifier = Modifier.padding(start = 24.dp, top = 16.dp), color = Palette.TextDim)
-            })
+            DateRangePicker(
+                state = state,
+                modifier = Modifier.fillMaxWidth().height(520.dp),
+                title = { Text("Select range", modifier = Modifier.padding(start = 24.dp, top = 16.dp), color = Palette.TextDim) },
+                colors = DatePickerDefaults.colors(
+                    containerColor = Palette.Surface,
+                    selectedDayContainerColor = Palette.Accent,
+                    selectedDayContentColor = Palette.Bg,
+                    dayInSelectionRangeContainerColor = Palette.AccentDim,
+                    todayDateBorderColor = Palette.Accent,
+                ),
+            )
         }
     }
 }

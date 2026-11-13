@@ -21,12 +21,7 @@ import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -65,6 +60,19 @@ import io.github.rudolfhk.screentime.ui.theme.Palette
 import io.github.rudolfhk.screentime.ui.theme.ScreenTimeTheme
 import io.github.rudolfhk.screentime.ui.tracker.TrackerScreen
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import io.github.rudolfhk.screentime.ui.components.Divider
+import io.github.rudolfhk.screentime.ui.components.PrimaryButton
+import io.github.rudolfhk.screentime.ui.theme.MetaStyle
 import java.time.LocalDate
 
 data class PermissionState(
@@ -159,20 +167,46 @@ private fun LockScreen(onUnlock: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(Icons.Filled.Fingerprint, null, tint = Palette.Accent, modifier = Modifier.size(64.dp))
+        Icon(Icons.Filled.Fingerprint, null, tint = Palette.Accent, modifier = Modifier.size(56.dp))
         Spacer(Modifier.height(16.dp))
-        Text("LOCKED", style = LabelStyle.copy(letterSpacing = 3.sp))
-        Spacer(Modifier.height(24.dp))
-        Button(onClick = onUnlock, colors = ButtonDefaults.buttonColors(containerColor = Palette.Accent, contentColor = Palette.Bg)) {
-            Text("Unlock")
-        }
+        Text("SCREENTIME DIAGNOSTICS", style = LabelStyle.copy(color = Palette.Text, letterSpacing = 3.sp))
+        Text("Locked", style = MetaStyle)
+        Spacer(Modifier.height(32.dp))
+        PrimaryButton("Unlock", onClick = onUnlock, icon = Icons.Filled.Fingerprint)
     }
 }
 
-private enum class Tab(val route: String, val label: String) {
-    Tracker("tracker", "Tracker"),
-    Stats("stats", "Stats"),
-    Settings("settings", "Settings"),
+private enum class Tab(val route: String, val label: String, val icon: ImageVector) {
+    Tracker("tracker", "Tracker", Icons.Filled.Timer),
+    Stats("stats", "Statistics", Icons.Filled.BarChart),
+    Settings("settings", "Settings", Icons.Filled.Settings),
+}
+
+/** Flat bottom bar: hairline top border, orange marker above the active tab. */
+@Composable
+private fun BottomBar(route: String?, onSelect: (Tab) -> Unit) {
+    Column(Modifier.background(Palette.Surface).navigationBarsPadding()) {
+        Divider()
+        Row(Modifier.fillMaxWidth().height(60.dp)) {
+            Tab.entries.forEach { tab ->
+                val selected = route == tab.route
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clickable(role = Role.Tab) { onSelect(tab) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Box(Modifier.fillMaxWidth(0.4f).height(2.dp).background(if (selected) Palette.Accent else Color.Transparent))
+                    Spacer(Modifier.weight(1f))
+                    Icon(tab.icon, contentDescription = null, tint = if (selected) Palette.Accent else Palette.TextFaint, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.height(4.dp))
+                    Text(tab.label.uppercase(), style = LabelStyle.copy(fontSize = 9.sp, color = if (selected) Palette.Text else Palette.TextFaint))
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -188,48 +222,28 @@ private fun AppRoot(permissions: PermissionState) {
         )
     }
 
+    fun openTab(tab: Tab) {
+        nav.navigate(tab.route) {
+            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
     Scaffold(
         containerColor = Palette.Bg,
+        contentWindowInsets = WindowInsets.statusBars,
         bottomBar = {
-            if (Tab.entries.any { it.route == route }) {
-                NavigationBar(containerColor = Palette.Surface, tonalElevation = 0.dp) {
-                    Tab.entries.forEach { tab ->
-                        NavigationBarItem(
-                            selected = route == tab.route,
-                            onClick = {
-                                nav.navigate(tab.route) {
-                                    popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            icon = {
-                                Icon(
-                                    when (tab) {
-                                        Tab.Tracker -> Icons.Filled.Timer
-                                        Tab.Stats -> Icons.Filled.BarChart
-                                        Tab.Settings -> Icons.Filled.Settings
-                                    },
-                                    contentDescription = null,
-                                )
-                            },
-                            label = { Text(tab.label) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Palette.Accent,
-                                selectedTextColor = Palette.Accent,
-                                indicatorColor = Palette.Accent.copy(alpha = 0.12f),
-                                unselectedIconColor = Palette.TextFaint,
-                                unselectedTextColor = Palette.TextFaint,
-                            ),
-                        )
-                    }
-                }
-            }
+            if (Tab.entries.any { it.route == route }) BottomBar(route, ::openTab)
         },
     ) { padding ->
         NavHost(nav, startDestination = Tab.Tracker.route, modifier = Modifier.padding(padding)) {
             composable(Tab.Tracker.route) {
-                TrackerScreen(permissions, onOpenApp = { openApp(it, PeriodSelection(RangeKind.DAY, LocalDate.now())) })
+                TrackerScreen(
+                    permissions,
+                    onOpenApp = { openApp(it, PeriodSelection(RangeKind.DAY, LocalDate.now())) },
+                    onSeeAllApps = { openTab(Tab.Stats) },
+                )
             }
             composable(Tab.Stats.route) { StatsScreen(onOpenApp = ::openApp) }
             composable(Tab.Settings.route) { SettingsScreen(permissions) }

@@ -4,14 +4,12 @@ An Android app that records detailed screen time data that built-in tools summar
 
 ## Features
 
-- **Tracker tab**: on/off toggle, today's screen time, unlocks, glances, average session, goal progress, a 24-hour session timeline, top apps and a tracking health card.
-- **Stats tab**: day, week, month, all-time or custom range with ‹ › navigation; filter by apps and category. Includes:
-  - KPIs compared with the previous period (± %)
-  - trend bars (time or unlocks, goal line)
-  - weekday × hour heatmap
-  - habits: first and last use, night-time use, median gap between uses, longest phone-free stretch
-  - session-length distribution
-  - categories, app ranking and data-quality coverage
+- **Tracker tab**: status panel with today's screen time, goal progress and the start/stop action; today's metrics (unlocks, glances, sessions, first unlock, notifications), a 24-hour session timeline, top apps and system status.
+- **Statistics tab**: day, week, month, all-time or custom range with ‹ › navigation; filter by apps and category. Four sections:
+  - *Overview*: 10 KPIs with change vs. the previous period, trend chart (time or unlocks) with min/avg/max/total and goal line, a period comparison table, and data-quality coverage
+  - *Apps*: category mix and an app ranking sortable by time, opens or notifications
+  - *Patterns*: hour-of-day profile, weekday × hour heatmap, weekday averages (weekdays vs. weekend), habits (first/last use, night use, median gap, longest phone-free stretch), session lengths, and goal streaks
+  - *Days*: busiest/quietest day highlights and a daily log (time, unlocks, first and last use)
 - **App detail**: all of the above for a single app, plus last used, longest session and notifications per launch.
 - **Settings**:
   - sync interval and daily goal
@@ -21,6 +19,18 @@ An Android app that records detailed screen time data that built-in tools summar
   - delete all data
 - **Home-screen widget**: today's time, unlocks and goal bar.
 - **Backfill**: the first start imports whatever history Android still holds (usually 7–10 days).
+
+## Screenshots
+
+Rendered from sample data by the screenshot tests (`./gradlew :app:testDebugUnitTest`, output in `app/build/outputs/roborazzi/`).
+
+| Tracker | Statistics: overview | Statistics: patterns |
+| --- | --- | --- |
+| ![Tracker](docs/screenshots/01_tracker.png) | ![Overview](docs/screenshots/03_stats_overview.png) | ![Patterns](docs/screenshots/05_stats_patterns.png) |
+
+| Statistics: apps | Statistics: days | Settings |
+| --- | --- | --- |
+| ![Apps](docs/screenshots/04_stats_apps.png) | ![Days](docs/screenshots/06_stats_days.png) | ![Settings](docs/screenshots/08_settings.png) |
 
 ## How it works (battery)
 

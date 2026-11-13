@@ -102,6 +102,26 @@ data class Stats(
     val daysOverGoal: Int,
     val coverage: Coverage,
     val filtered: Boolean,
+    val insights: Insights = Insights(),
+)
+
+/** Derived day-level analysis for the "Patterns" view. */
+data class Insights(
+    /** Average usage per tracked day for Monday..Sunday (index 0 = Monday). */
+    val weekdayAverages: LongArray = LongArray(7),
+    val weekdayAvg: Long = 0,
+    val weekendAvg: Long = 0,
+    /** Busiest / quietest fully elapsed tracked day. */
+    val busiestDay: DayHabit? = null,
+    val quietestDay: DayHabit? = null,
+    val trackedDays: Int = 0,
+    val avgUnlocksPerDay: Double = 0.0,
+    val screenTimePerUnlock: Long = 0,
+    val sessions: Int = 0,
+    val peakHour: Int? = null,
+    /** Consecutive tracked days at or under the goal, ending with the most recent complete day. */
+    val currentGoalStreak: Int = 0,
+    val bestGoalStreak: Int = 0,
 )
 
 object StatsCalculator {
@@ -254,11 +274,13 @@ object StatsCalculator {
         val firstUses = trackedDayList.mapNotNull { it.firstUseMinute }
         val lastUses = trackedDayList.mapNotNull { it.lastUseMinute }
         val daysOverGoal = if (q.dailyGoalMs > 0) trackedDayList.count { it.screenTime > q.dailyGoalMs } else 0
+        val summary = summarize(input, q)
+        val insights = insights(trackedDayList, summary, sessionLengths.size, hourly, q, filtered)
 
         return Stats(
             range = r,
             granularity = granularity,
-            summary = summarize(input, q),
+            summary = summary,
             buckets = buckets,
             heatmap = heat,
             hourly = hourly,
@@ -276,6 +298,51 @@ object StatsCalculator {
             daysOverGoal = daysOverGoal,
             coverage = coverage(input.trackingPeriods, input.gaps, r, q.now),
             filtered = filtered,
+            insights = insights,
+        )
+    }
+
+    private fun insights(
+        days: List<DayHabit>,
+        summary: Summary,
+        sessions: Int,
+        hourly: LongArray,
+        q: StatsQuery,
+        filtered: Boolean,
+    ): Insights {
+        val complete = days.filter { TimeRanges.dayRange(it.date, q.zone).end <= q.now }
+        val byWeekday = Array(7) { ArrayList<Long>() }
+        days.forEach { byWeekday[it.date.dayOfWeek.value - 1] += it.screenTime }
+        val weekdayAverages = LongArray(7) { i -> byWeekday[i].takeIf { it.isNotEmpty() }?.average()?.toLong() ?: 0 }
+        val weekdays = days.filter { it.date.dayOfWeek.value <= 5 }.map { it.screenTime }
+        val weekend = days.filter { it.date.dayOfWeek.value > 5 }.map { it.screenTime }
+
+        var current = 0
+        var best = 0
+        var run = 0
+        if (q.dailyGoalMs > 0) {
+            for (d in complete) {
+                if (d.screenTime <= q.dailyGoalMs) {
+                    run++
+                    best = maxOf(best, run)
+                } else run = 0
+            }
+            current = run
+        }
+        val total = if (filtered) summary.appTime else summary.screenTime
+        return Insights(
+            weekdayAverages = weekdayAverages,
+            weekdayAvg = weekdays.takeIf { it.isNotEmpty() }?.average()?.toLong() ?: 0,
+            weekendAvg = weekend.takeIf { it.isNotEmpty() }?.average()?.toLong() ?: 0,
+            busiestDay = complete.filter { it.screenTime > 0 }.maxByOrNull { it.screenTime },
+            quietestDay = complete.minByOrNull { it.screenTime },
+            trackedDays = days.size,
+            avgUnlocksPerDay = if (days.isNotEmpty()) summary.unlocks.toDouble() / days.size else 0.0,
+            screenTimePerUnlock = if (summary.unlocks > 0) total / summary.unlocks else 0,
+            sessions = sessions,
+            peakHour = hourly.indices.maxByOrNull { hourly[it] }?.takeIf { hourly[it] > 0 },
+            currentGoalStreak = current,
+            bestGoalStreak = best,
         )
     }
 

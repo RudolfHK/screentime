@@ -1,5 +1,6 @@
 package io.github.rudolfhk.screentime.ui.stats
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +31,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -37,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,16 +54,20 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.rudolfhk.screentime.AppContainer
 import io.github.rudolfhk.screentime.container
 import io.github.rudolfhk.screentime.core.AppCategories
-import io.github.rudolfhk.screentime.core.Format
 import io.github.rudolfhk.screentime.core.PeriodSelection
 import io.github.rudolfhk.screentime.core.RangeKind
+import io.github.rudolfhk.screentime.core.TimeRanges
 import io.github.rudolfhk.screentime.data.AppInfoEntity
 import io.github.rudolfhk.screentime.data.StatsBundle
 import io.github.rudolfhk.screentime.ui.components.AppIcon
+import io.github.rudolfhk.screentime.ui.components.ControlShape
 import io.github.rudolfhk.screentime.ui.components.EmptyHint
-import io.github.rudolfhk.screentime.ui.components.Pill
-import io.github.rudolfhk.screentime.ui.components.SectionCard
-import io.github.rudolfhk.screentime.ui.components.UsageRow
+import io.github.rudolfhk.screentime.ui.components.FilterChip
+import io.github.rudolfhk.screentime.ui.components.Gutter
+import io.github.rudolfhk.screentime.ui.components.Panel
+import io.github.rudolfhk.screentime.ui.components.ScreenHeader
+import io.github.rudolfhk.screentime.ui.components.SectionTabs
+import io.github.rudolfhk.screentime.ui.theme.MetaStyle
 import io.github.rudolfhk.screentime.ui.theme.Palette
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,12 +77,15 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import java.time.LocalDate
+import java.time.ZoneId
 
 data class StatsFilter(
     val selection: PeriodSelection = PeriodSelection(RangeKind.WEEK, LocalDate.now()),
     val packages: Set<String>? = null,
     val category: Int? = null,
 )
+
+enum class StatsSection(val label: String) { OVERVIEW("Overview"), APPS("Apps"), PATTERNS("Patterns"), DAYS("Days") }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class StatsViewModel(c: AppContainer) : ViewModel() {
@@ -100,70 +110,91 @@ fun StatsScreen(onOpenApp: (String, PeriodSelection) -> Unit) {
     val filter by vm.filter.collectAsStateWithLifecycle()
     val bundle by vm.bundle.collectAsStateWithLifecycle()
     val apps by vm.apps.collectAsStateWithLifecycle()
+    StatsContent(
+        filter = filter,
+        bundle = bundle,
+        allApps = apps,
+        onSelectPeriod = vm::select,
+        onSetPackages = vm::setPackages,
+        onSetCategory = vm::setCategory,
+        onOpenApp = { onOpenApp(it, filter.selection) },
+    )
+}
+
+@Composable
+fun StatsContent(
+    filter: StatsFilter,
+    bundle: StatsBundle?,
+    allApps: List<AppInfoEntity>,
+    onSelectPeriod: (PeriodSelection) -> Unit,
+    onSetPackages: (Set<String>?) -> Unit,
+    onSetCategory: (Int?) -> Unit,
+    onOpenApp: (String) -> Unit,
+    initialSection: StatsSection = StatsSection.OVERVIEW,
+) {
+    var section by rememberSaveable { mutableStateOf(initialSection) }
     var showAppPicker by remember { mutableStateOf(false) }
-    var showAllApps by remember { mutableStateOf(false) }
+    val zone = ZoneId.systemDefault()
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("Stats", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
-        PeriodControls(filter.selection, bundle?.stats?.range, onSelect = vm::select)
-        FilterRow(filter, apps, onPickApps = { showAppPicker = true }, onCategory = vm::setCategory, onClear = {
-            vm.setPackages(null); vm.setCategory(null)
-        })
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader(
+            "Statistics",
+            subtitle = bundle?.stats?.range?.let { TimeRanges.label(filter.selection, it, zone, LocalDate.now(zone)) },
+        )
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Gutter),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            PeriodControls(filter.selection, bundle?.stats?.range, onSelect = onSelectPeriod)
+            FilterRow(filter, allApps, onPickApps = { showAppPicker = true }, onCategory = onSetCategory, onClear = {
+                onSetPackages(null); onSetCategory(null)
+            })
+            SectionTabs(StatsSection.entries.map { it to it.label }, section, { section = it })
 
-        val b = bundle
-        if (b == null) {
-            EmptyHint("Loading…")
-            return@Column
-        }
-        val st = b.stats
-        if (b.firstTrackedAt == null) {
-            SectionCard { EmptyHint("No data yet. Switch tracking on in the Tracker tab.") }
-            return@Column
-        }
-
-        SummaryCard(st, b.previous, b.settings.countNotifications)
-        TrendCard(st, b.settings.dailyGoalMinutes * 60_000L)
-        HeatmapCard(st)
-        HabitsCard(st)
-        DistributionCard(st)
-        if (filter.category == null) CategoriesCard(st, onSelectCategory = vm::setCategory)
-
-        SectionCard("Apps", trailing = { Text("${st.apps.size}", color = Palette.TextDim, fontSize = 12.sp) }) {
-            if (st.apps.isEmpty()) EmptyHint("No app usage in this period.")
-            val shown = if (showAllApps) st.apps else st.apps.take(15)
-            val maxT = st.apps.firstOrNull()?.total ?: 1
-            val total = st.apps.sumOf { it.total }.coerceAtLeast(1)
-            shown.forEach { a ->
-                UsageRow(
-                    packageName = a.packageName,
-                    label = b.apps[a.packageName]?.label ?: a.packageName,
-                    value = Format.duration(a.total),
-                    fraction = a.total.toFloat() / maxT,
-                    sub = "${Format.percent(a.total.toDouble() / total)} · ${a.launches} launches · ⌀ ${Format.durationPrecise(a.avgSession)}" +
-                        if (a.notifications > 0) " · ${a.notifications} notif." else "",
-                    onClick = { onOpenApp(a.packageName, filter.selection) },
-                )
-            }
-            if (st.apps.size > 15) {
-                TextButton(onClick = { showAllApps = !showAllApps }) {
-                    Text(if (showAllApps) "Show less" else "Show all ${st.apps.size}", color = Palette.Accent)
+            val b = bundle
+            when {
+                b == null -> EmptyHint("Loading…")
+                b.firstTrackedAt == null -> Panel { EmptyHint("No data yet. Start tracking in the Tracker tab.") }
+                else -> {
+                    val st = b.stats
+                    val goal = b.settings.dailyGoalMinutes * 60_000L
+                    when (section) {
+                        StatsSection.OVERVIEW -> {
+                            SummaryPanel(st, b.previous, b.settings.countNotifications)
+                            TrendPanel(st, goal)
+                            ComparisonPanel(st, b.previous)
+                            CoveragePanel(st)
+                        }
+                        StatsSection.APPS -> {
+                            if (filter.category == null) CategoryPanel(st, onSelectCategory = onSetCategory)
+                            AppRankingPanel(st, b.apps, onOpenApp)
+                        }
+                        StatsSection.PATTERNS -> {
+                            HourlyPanel(st)
+                            HeatmapPanel(st)
+                            WeekdayPanel(st)
+                            HabitsPanel(st)
+                            SessionLengthPanel(st)
+                            GoalPanel(st, goal)
+                        }
+                        StatsSection.DAYS -> {
+                            HighlightsPanel(st)
+                            DailyLogPanel(st, goal)
+                        }
+                    }
                 }
             }
+            Spacer(Modifier.height(20.dp))
         }
-        CoverageCard(st)
-        Spacer(Modifier.height(16.dp))
     }
 
     if (showAppPicker) {
         AppPickerSheet(
             title = "Filter by apps",
-            apps = apps,
+            apps = allApps,
             initial = filter.packages ?: emptySet(),
             onDismiss = { showAppPicker = false },
-            onApply = { vm.setPackages(it); showAppPicker = false },
+            onApply = { onSetPackages(it); showAppPicker = false },
         )
     }
 }
@@ -188,10 +219,10 @@ private fun FilterRow(
             pk.size == 1 -> apps.firstOrNull { it.packageName == pk.first() }?.label ?: pk.first()
             else -> "${pk.size} apps"
         }
-        Pill(appLabel, pk != null, icon = Icons.Filled.Apps, onClick = onPickApps)
+        FilterChip(appLabel, pk != null, icon = Icons.Filled.Apps, onClick = onPickApps)
         Box {
-            Pill(filter.category?.let(AppCategories::label) ?: "All categories", filter.category != null, icon = Icons.Filled.Category) { catMenu = true }
-            DropdownMenu(expanded = catMenu, onDismissRequest = { catMenu = false }) {
+            FilterChip(filter.category?.let(AppCategories::label) ?: "All categories", filter.category != null, icon = Icons.Filled.Category) { catMenu = true }
+            DropdownMenu(expanded = catMenu, onDismissRequest = { catMenu = false }, containerColor = Palette.SurfaceHigh, shape = ControlShape) {
                 DropdownMenuItem(text = { Text("All categories") }, onClick = { onCategory(null); catMenu = false })
                 AppCategories.all.forEach { c ->
                     DropdownMenuItem(text = { Text(AppCategories.label(c)) }, onClick = { onCategory(c); catMenu = false })
@@ -199,7 +230,7 @@ private fun FilterRow(
             }
         }
         if (filter.packages != null || filter.category != null) {
-            Pill("Clear", false, icon = Icons.Filled.Close, onClick = onClear)
+            FilterChip("Clear", false, icon = Icons.Filled.Close, onClick = onClear)
         }
     }
 }
@@ -218,18 +249,28 @@ fun AppPickerSheet(
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var selected by remember { mutableStateOf(initial) }
     var query by remember { mutableStateOf("") }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = Palette.Surface) {
-        Column(Modifier.padding(horizontal = 16.dp)) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheet,
+        containerColor = Palette.Surface,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp),
+    ) {
+        Column(Modifier.padding(horizontal = Gutter)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                TextButton(onClick = { selected = emptySet() }) { Text("None", color = Palette.TextDim) }
-                TextButton(onClick = { onApply(selected) }) { Text(applyLabel, color = Palette.Accent) }
+                Column(Modifier.weight(1f)) {
+                    Text(title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text("${selected.size} selected", style = MetaStyle)
+                }
+                TextButton(onClick = { selected = emptySet() }) { Text("NONE", color = Palette.TextDim) }
+                TextButton(onClick = { onApply(selected) }) { Text(applyLabel.uppercase(), color = Palette.Accent) }
             }
             OutlinedTextField(
                 value = query, onValueChange = { query = it },
                 leadingIcon = { Icon(Icons.Filled.Search, null) },
                 placeholder = { Text("Search apps") },
                 singleLine = true,
+                shape = ControlShape,
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Palette.Accent, unfocusedBorderColor = Palette.Outline, cursorColor = Palette.Accent),
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(8.dp))
@@ -246,21 +287,21 @@ fun AppPickerSheet(
                             .padding(vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        AppIcon(app.packageName, 32.dp)
+                        AppIcon(app.packageName, 32.dp, label = app.label)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(app.label, fontSize = 14.sp)
-                            Text(app.packageName, fontSize = 11.sp, color = Palette.TextFaint)
+                            Text(app.packageName, style = MetaStyle.copy(fontSize = 10.sp))
                         }
                         Checkbox(
                             checked = checked,
                             onCheckedChange = { selected = if (it) selected + app.packageName else selected - app.packageName },
-                            colors = CheckboxDefaults.colors(checkedColor = Palette.Accent, checkmarkColor = Palette.Bg),
+                            colors = CheckboxDefaults.colors(checkedColor = Palette.Accent, checkmarkColor = Palette.Bg, uncheckedColor = Palette.TextFaint),
                         )
                     }
                 }
             }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(24.dp).background(Palette.Surface))
         }
     }
 }

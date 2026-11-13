@@ -2,10 +2,10 @@ package io.github.rudolfhk.screentime.ui.appdetail
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -36,15 +36,20 @@ import io.github.rudolfhk.screentime.core.Format
 import io.github.rudolfhk.screentime.core.PeriodSelection
 import io.github.rudolfhk.screentime.data.StatsBundle
 import io.github.rudolfhk.screentime.ui.components.AppIcon
+import io.github.rudolfhk.screentime.ui.components.DataRow
+import io.github.rudolfhk.screentime.ui.components.Divider
 import io.github.rudolfhk.screentime.ui.components.EmptyHint
-import io.github.rudolfhk.screentime.ui.components.SectionCard
-import io.github.rudolfhk.screentime.ui.components.StatLine
-import io.github.rudolfhk.screentime.ui.stats.DistributionCard
-import io.github.rudolfhk.screentime.ui.stats.HabitsCard
-import io.github.rudolfhk.screentime.ui.stats.HeatmapCard
+import io.github.rudolfhk.screentime.ui.components.Gutter
+import io.github.rudolfhk.screentime.ui.components.Panel
+import io.github.rudolfhk.screentime.ui.stats.ComparisonPanel
+import io.github.rudolfhk.screentime.ui.stats.HeatmapPanel
+import io.github.rudolfhk.screentime.ui.stats.HourlyPanel
 import io.github.rudolfhk.screentime.ui.stats.PeriodControls
-import io.github.rudolfhk.screentime.ui.stats.SummaryCard
-import io.github.rudolfhk.screentime.ui.stats.TrendCard
+import io.github.rudolfhk.screentime.ui.stats.SessionLengthPanel
+import io.github.rudolfhk.screentime.ui.stats.SummaryPanel
+import io.github.rudolfhk.screentime.ui.stats.TrendPanel
+import io.github.rudolfhk.screentime.ui.stats.WeekdayPanel
+import io.github.rudolfhk.screentime.ui.theme.MetaStyle
 import io.github.rudolfhk.screentime.ui.theme.Palette
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,45 +75,61 @@ fun AppDetailScreen(packageName: String, initial: PeriodSelection, onBack: () ->
     val vm: AppDetailViewModel = viewModel(key = "app-$packageName") { AppDetailViewModel(context.container, packageName, initial) }
     val selection by vm.selection.collectAsStateWithLifecycle()
     val bundle by vm.bundle.collectAsStateWithLifecycle()
-    val info = bundle?.apps?.get(packageName)
+    AppDetailContent(packageName, selection, bundle, onSelect = { vm.selection.value = it }, onBack = onBack)
+}
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            AppIcon(packageName, 44.dp)
+@Composable
+fun AppDetailContent(
+    packageName: String,
+    selection: PeriodSelection,
+    bundle: StatsBundle?,
+    onSelect: (PeriodSelection) -> Unit,
+    onBack: () -> Unit,
+) {
+    val info = bundle?.apps?.get(packageName)
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.padding(end = Gutter, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Palette.Text) }
+            AppIcon(packageName, 42.dp, label = info?.label)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(info?.label ?: packageName, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(info?.label ?: packageName, color = Palette.Text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    packageName + " · " + AppCategories.label(info?.category ?: AppCategories.UNDEFINED),
-                    fontSize = 11.sp, color = Palette.TextFaint, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    AppCategories.label(info?.category ?: AppCategories.UNDEFINED).uppercase() + " · " + packageName,
+                    style = MetaStyle, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
         }
-        PeriodControls(selection, bundle?.stats?.range, onSelect = { vm.selection.value = it })
-
-        val b = bundle ?: run { EmptyHint("Loading…"); return@Column }
-        val st = b.stats
-        SummaryCard(st, b.previous, b.settings.countNotifications)
-        TrendCard(st, 0)
-        HeatmapCard(st)
-        DistributionCard(st)
-        HabitsCard(st)
-        val usage = st.apps.firstOrNull()
-        if (usage != null) {
-            SectionCard("Details") {
-                val tf = DateTimeFormatter.ofPattern("EEE d MMM, HH:mm")
-                StatLine("Last used", usage.lastUsed?.let { tf.format(Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault())) } ?: "–")
-                StatLine("Longest single session", Format.durationPrecise(usage.longestSession))
-                StatLine("Avg per launch", Format.durationPrecise(usage.avgSession))
-                if (b.settings.countNotifications && usage.launches > 0) {
-                    StatLine("Notifications per launch", "%.1f".format(usage.notifications.toDouble() / usage.launches))
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Gutter),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            PeriodControls(selection, bundle?.stats?.range, onSelect = onSelect)
+            val b = bundle ?: run { EmptyHint("Loading…"); return@Column }
+            val st = b.stats
+            SummaryPanel(st, b.previous, b.settings.countNotifications)
+            TrendPanel(st, 0)
+            ComparisonPanel(st, b.previous)
+            HourlyPanel(st)
+            HeatmapPanel(st)
+            WeekdayPanel(st)
+            SessionLengthPanel(st)
+            val usage = st.apps.firstOrNull()
+            if (usage != null) {
+                Panel("Details", contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)) {
+                    val tf = DateTimeFormatter.ofPattern("EEE d MMM, HH:mm")
+                    DataRow("Last used", usage.lastUsed?.let { tf.format(Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault())) } ?: "–")
+                    Divider()
+                    DataRow("Longest single session", Format.durationPrecise(usage.longestSession))
+                    Divider()
+                    DataRow("Avg per launch", Format.durationPrecise(usage.avgSession))
+                    if (b.settings.countNotifications && usage.launches > 0) {
+                        Divider()
+                        DataRow("Notifications per launch", "%.1f".format(usage.notifications.toDouble() / usage.launches))
+                    }
                 }
             }
+            Spacer(Modifier.height(20.dp))
         }
-        Spacer(Modifier.height(16.dp))
     }
 }

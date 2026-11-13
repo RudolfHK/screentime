@@ -67,5 +67,5 @@
         android:layout_marginTop="6dp"
         android:max="1000"
         android:progressTint="@color/accent"
-        android:progressBackgroundTint="#FF2A2F38" />
+        android:progressBackgroundTint="#FF29292D" />
 </LinearLayout>

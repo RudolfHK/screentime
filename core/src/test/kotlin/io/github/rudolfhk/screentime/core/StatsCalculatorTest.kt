@@ -170,6 +170,36 @@ class StatsCalculatorTest {
     }
 
     @Test
+    fun `insights over a week`() {
+        // Mon 10m, Tue 40m, Wed 20m, Sat 60m; goal is 30m.
+        val day = 24 * h
+        val screens = listOf(
+            ScreenSession(d0 + 9 * h, d0 + 9 * h + 10 * m, d0 + 9 * h),
+            ScreenSession(d0 + day + 9 * h, d0 + day + 9 * h + 40 * m, d0 + day + 9 * h),
+            ScreenSession(d0 + 2 * day + 9 * h, d0 + 2 * day + 9 * h + 20 * m, d0 + 2 * day + 9 * h),
+            ScreenSession(d0 + 5 * day + 20 * h, d0 + 5 * day + 21 * h, d0 + 5 * day + 20 * h),
+        )
+        val week = TimeRanges.resolve(PeriodSelection(RangeKind.WEEK, day0()), zone, 0, d0 + 30 * day)
+        val s = StatsCalculator.calculate(input(screens), query(range = week))
+        val i = s.insights
+        assertEquals(10 * m, i.weekdayAverages[0])
+        assertEquals(60 * m, i.weekdayAverages[5])
+        assertEquals(70 * m / 5, i.weekdayAvg)
+        assertEquals(30 * m, i.weekendAvg)
+        assertEquals(day0().plusDays(5), i.busiestDay!!.date)
+        assertEquals(0L, i.quietestDay!!.screenTime)
+        assertEquals(7, i.trackedDays)
+        assertEquals(4, i.sessions)
+        assertEquals(130 * m / 4, i.screenTimePerUnlock)
+        assertEquals(9, i.peakHour) // 09:00 holds 70m vs. 60m at 20:00
+        // Sat (60m) breaks the run; Sun (0m) starts a new one.
+        assertEquals(1, i.currentGoalStreak)
+        assertEquals(3, i.bestGoalStreak)
+    }
+
+    private fun day0() = day
+
+    @Test
     fun `format helpers`() {
         assertEquals("3h 12m", Format.duration(3 * h + 12 * m))
         assertEquals("45m", Format.duration(45 * m))
