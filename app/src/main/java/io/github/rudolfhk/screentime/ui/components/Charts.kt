@@ -315,3 +315,155 @@ fun RecordingIndicator(active: Boolean, modifier: Modifier = Modifier) {
     )
     StatusDot(if (active) Palette.Accent else Palette.TextFaint, modifier.alpha(if (active) blink else 1f), size = 9.dp)
 }
+
+/**
+ * Stacked bars: one bar per bucket, split into [series] (e.g. top apps + "other").
+ * Tap a bar to see the per-series breakdown for that bucket.
+ */
+@Composable
+fun StackedBarChart(
+    series: List<Pair<String, LongArray>>,
+    colors: List<Color>,
+    labels: List<String>,
+    detailLabels: List<String>,
+    format: (Long) -> String,
+    modifier: Modifier = Modifier,
+    height: Int = 170,
+) {
+    val n = series.firstOrNull()?.second?.size ?: 0
+    if (n == 0) return
+    var selected by remember(n) { mutableStateOf<Int?>(null) }
+    val measurer = rememberTextMeasurer()
+    val axisStyle = MetaStyle.copy(fontSize = 9.sp)
+    val totals = LongArray(n) { i -> series.sumOf { it.second[i] } }
+    val maxValue = totals.max().coerceAtLeast(1L)
+
+    Column(modifier) {
+        val sel = selected
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(22.dp)) {
+            if (sel != null) {
+                Text(detailLabels.getOrElse(sel) { "" }.uppercase(), style = LabelStyle)
+                Spacer(Modifier.width(8.dp))
+                Text(format(totals[sel]), style = NumberStyle.copy(fontSize = 14.sp, color = Palette.Accent))
+            } else {
+                Text("TAP A BAR FOR THE APP BREAKDOWN", style = LabelStyle.copy(color = Palette.TextFaint, fontSize = 9.sp))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Canvas(
+            Modifier
+                .fillMaxWidth()
+                .height(height.dp)
+                .pointerInput(n) {
+                    detectTapGestures { pos ->
+                        val axisW = 34.dp.toPx()
+                        val slot = (size.width - axisW) / n.toFloat()
+                        val i = ((pos.x - axisW) / slot).toInt().coerceIn(0, n - 1)
+                        selected = if (selected == i) null else i
+                    }
+                },
+        ) {
+            val axisW = 34.dp.toPx()
+            val labelH = 16.dp.toPx()
+            val chartH = size.height - labelH
+            val slot = (size.width - axisW) / n
+            val barW = (slot * 0.66f).coerceAtMost(26.dp.toPx()).coerceAtLeast(2f)
+            fun h(v: Long) = (v.toFloat() / maxValue) * (chartH - 6.dp.toPx())
+
+            listOf(0L, maxValue / 2, maxValue).forEach { v ->
+                val yy = chartH - h(v)
+                drawLine(if (v == 0L) Palette.Outline else Palette.Grid, Offset(axisW, yy), Offset(size.width, yy), strokeWidth = 1f)
+                if (v > 0) {
+                    val l = measurer.measure(format(v), axisStyle)
+                    drawText(l, topLeft = Offset(0f, (yy - l.size.height / 2).coerceAtLeast(0f)))
+                }
+            }
+            for (i in 0 until n) {
+                val x = axisW + i * slot + (slot - barW) / 2
+                var y = chartH
+                val dim = selected != null && selected != i
+                series.forEachIndexed { si, (_, values) ->
+                    val v = values[i]
+                    if (v <= 0) return@forEachIndexed
+                    val hh = h(v)
+                    val c = colors[si % colors.size]
+                    drawRect(if (dim) c.copy(alpha = 0.3f) else c, topLeft = Offset(x, y - hh), size = Size(barW, hh))
+                    // 1px separator between segments
+                    drawRect(Palette.Surface, topLeft = Offset(x, y - hh), size = Size(barW, 1f))
+                    y -= hh
+                }
+            }
+            val step = max(1, (n + 7) / 8)
+            for (i in 0 until n step step) {
+                val layout = measurer.measure(labels.getOrElse(i) { "" }, axisStyle)
+                val x = (axisW + i * slot + slot / 2 - layout.size.width / 2).coerceIn(axisW, size.width - layout.size.width)
+                drawText(layout, topLeft = Offset(x, chartH + 4.dp.toPx()))
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        // Legend, or the selected bar's breakdown.
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            series.forEachIndexed { si, (name, values) ->
+                val v = if (sel != null) values[sel] else values.sum()
+                val total = if (sel != null) totals[sel] else totals.sum()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    StatusDot(colors[si % colors.size])
+                    Spacer(Modifier.width(8.dp))
+                    Text(name, fontSize = 12.sp, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text(if (total > 0) "${(v * 100 / total)}%" else "–", style = MetaStyle.copy(fontSize = 10.sp), modifier = Modifier.width(38.dp), textAlign = TextAlign.End)
+                    Text(format(v), style = NumberStyle.copy(fontSize = 12.sp), modifier = Modifier.width(66.dp), textAlign = TextAlign.End)
+                }
+            }
+        }
+    }
+}
+
+/** Ring chart of shares with a centre label. */
+@Composable
+fun DonutChart(
+    shares: List<Pair<Long, Color>>,
+    centerValue: String,
+    centerLabel: String,
+    modifier: Modifier = Modifier,
+    size: Int = 140,
+) {
+    val total = shares.sumOf { it.first }.coerceAtLeast(1L)
+    Box(modifier.size(size.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(size.dp)) {
+            val stroke = 16.dp.toPx()
+            val inset = stroke / 2
+            val arcSize = Size(this.size.width - stroke, this.size.height - stroke)
+            drawArc(Palette.Grid, 0f, 360f, false, topLeft = Offset(inset, inset), size = arcSize, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+            var start = -90f
+            shares.filter { it.first > 0 }.forEach { (v, c) ->
+                val sweep = 360f * v / total
+                drawArc(c, start, (sweep - 1.2f).coerceAtLeast(0.5f), false, topLeft = Offset(inset, inset), size = arcSize, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+                start += sweep
+            }
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(centerValue, style = NumberStyle.copy(fontSize = 17.sp))
+            Text(centerLabel.uppercase(), style = LabelStyle.copy(fontSize = 8.sp, color = Palette.TextFaint))
+        }
+    }
+}
+
+/** Tiny bar sparkline for list rows. */
+@Composable
+fun Sparkline(values: LongArray, modifier: Modifier = Modifier, color: Color = Palette.Accent, highlight: Int? = null) {
+    if (values.isEmpty()) return
+    val maxV = values.max().coerceAtLeast(1L)
+    Canvas(modifier.height(20.dp)) {
+        val slot = size.width / values.size
+        val w = (slot * 0.7f).coerceAtLeast(1f)
+        values.forEachIndexed { i, v ->
+            val x = i * slot + (slot - w) / 2
+            if (v > 0) {
+                val hh = (v.toFloat() / maxV * size.height).coerceAtLeast(1.5f)
+                drawRect(if (highlight == null || highlight == i) color else color.copy(alpha = 0.55f), topLeft = Offset(x, size.height - hh), size = Size(w, hh))
+            } else {
+                drawRect(Palette.Grid, topLeft = Offset(x, size.height - 1.5f), size = Size(w, 1.5f))
+            }
+        }
+    }
+}

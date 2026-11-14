@@ -22,6 +22,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.rudolfhk.screentime.core.AppCategories
+import io.github.rudolfhk.screentime.ui.components.StackedBarChart
+import io.github.rudolfhk.screentime.ui.components.Sparkline
+import io.github.rudolfhk.screentime.ui.components.DonutChart
+import io.github.rudolfhk.screentime.ui.components.AppIcon
+import io.github.rudolfhk.screentime.core.AppUsage
+import androidx.compose.ui.text.style.TextOverflow
 import io.github.rudolfhk.screentime.core.Format
 import io.github.rudolfhk.screentime.core.Granularity
 import io.github.rudolfhk.screentime.core.Stats
@@ -66,7 +72,7 @@ fun SummaryPanel(stats: Stats, previous: Summary?, countNotifications: Boolean) 
     val i = stats.insights
     val notif = if (countNotifications) s.notifications.toString() else "off"
     val notifDelta = p?.takeIf { countNotifications }?.let { Format.delta(s.notifications.toLong(), it.notifications.toLong()) }
-    Panel(if (stats.filtered) "Selected apps" else "Summary", subtitle = if (p != null) "Change vs. previous period" else null, contentPadding = NoPadding) {
+    Panel(if (stats.filtered) "App summary" else "Summary", subtitle = if (p != null) "Change vs. previous period" else null, contentPadding = NoPadding) {
         val items: List<@Composable (Modifier) -> Unit> = if (stats.filtered) listOf(
             { m -> MetricTile("App time", Format.duration(s.appTime), m, delta = p?.let { Format.delta(s.appTime, it.appTime) }, large = true) },
             { m -> MetricTile("Avg / day", Format.duration(s.avgPerDay), m, delta = p?.let { Format.delta(s.avgPerDay, it.avgPerDay) }, large = true) },
@@ -90,39 +96,52 @@ fun SummaryPanel(stats: Stats, previous: Summary?, countNotifications: Boolean) 
     }
 }
 
+/** Short axis labels and long detail labels for the buckets of [stats]. */
+fun bucketLabels(stats: Stats): Pair<List<String>, List<String>> {
+    val zone = ZoneId.systemDefault()
+    val short = stats.buckets.map { TimeRanges.bucketLabel(it.start, stats.granularity, zone) }
+    val long = stats.buckets.map { b ->
+        val z = Instant.ofEpochMilli(b.start).atZone(zone)
+        when (stats.granularity) {
+            Granularity.HOUR -> DateTimeFormatter.ofPattern("HH:00").format(z)
+            Granularity.DAY -> DateTimeFormatter.ofPattern("EEE d MMM").format(z)
+            Granularity.WEEK -> "Week of " + DateTimeFormatter.ofPattern("d MMM").format(z)
+            Granularity.MONTH -> DateTimeFormatter.ofPattern("MMMM yyyy").format(z)
+        }
+    }
+    return short to long
+}
+
+fun currentBucket(stats: Stats): Int? {
+    val now = System.currentTimeMillis()
+    return stats.buckets.indexOfFirst { now >= it.start && now < it.end }.takeIf { it >= 0 }
+}
+
+fun unitLabel(stats: Stats) = when (stats.granularity) {
+    Granularity.HOUR -> "per hour"
+    Granularity.DAY -> "per day"
+    Granularity.WEEK -> "per week"
+    Granularity.MONTH -> "per month"
+}
+
 @Composable
 fun TrendPanel(stats: Stats, goalMs: Long) {
-    var showUnlocks by remember { mutableStateOf(false) }
-    val zone = ZoneId.systemDefault()
-    val unit = when (stats.granularity) {
-        Granularity.HOUR -> "per hour"
-        Granularity.DAY -> "per day"
-        Granularity.WEEK -> "per week"
-        Granularity.MONTH -> "per month"
-    }
+    var showCount by remember { mutableStateOf(false) }
+    val countLabel = if (stats.filtered) "Opens" else "Unlocks"
     Panel(
         "Trend",
-        subtitle = unit,
+        subtitle = unitLabel(stats),
         trailing = {
-            if (!stats.filtered) {
-                SegmentedControl(listOf(false to "Time", true to "Unlocks"), showUnlocks, { showUnlocks = it }, Modifier.width(150.dp), compact = true)
-            }
+            SegmentedControl(listOf(false to "Time", true to countLabel), showCount, { showCount = it }, Modifier.width(150.dp), compact = true)
         },
     ) {
-        val labels = stats.buckets.map { TimeRanges.bucketLabel(it.start, stats.granularity, zone) }
-        val detail = stats.buckets.map { b ->
-            val z = Instant.ofEpochMilli(b.start).atZone(zone)
-            when (stats.granularity) {
-                Granularity.HOUR -> DateTimeFormatter.ofPattern("HH:00").format(z)
-                Granularity.DAY -> DateTimeFormatter.ofPattern("EEE d MMM").format(z)
-                Granularity.WEEK -> "Week of " + DateTimeFormatter.ofPattern("d MMM").format(z)
-                Granularity.MONTH -> DateTimeFormatter.ofPattern("MMMM yyyy").format(z)
-            }
-        }
-        val now = System.currentTimeMillis()
-        val current = stats.buckets.indexOfFirst { now >= it.start && now < it.end }.takeIf { it >= 0 }
-        if (showUnlocks && !stats.filtered) {
-            BarChart(stats.buckets.map { it.unlocks.toLong() }, labels, { "$it" }, color = Palette.Steel, highlight = current, detailLabels = detail)
+        val (labels, detail) = bucketLabels(stats)
+        val current = currentBucket(stats)
+        if (showCount) {
+            val counts = if (stats.filtered) {
+                stats.buckets.indices.map { i -> stats.apps.sumOf { it.launchBuckets.getOrElse(i) { 0 } }.toLong() }
+            } else stats.buckets.map { it.unlocks.toLong() }
+            BarChart(counts, labels, { "$it" }, color = Palette.Steel, highlight = current, detailLabels = detail)
         } else {
             BarChart(
                 values = stats.buckets.map { if (stats.filtered) it.appTime else it.screenTime },
@@ -236,64 +255,240 @@ fun CategoryPanel(stats: Stats, onSelectCategory: (Int) -> Unit) {
     }
 }
 
-enum class AppSort(val label: String) { TIME("Time"), LAUNCHES("Opens"), NOTIFICATIONS("Notif.") }
+enum class AppSort(val label: String) { TIME("Time"), LAUNCHES("Opens"), NOTIFICATIONS("Notif."), CHANGE("Δ") }
+
+private const val TOP_N = 5
+
+/** Overview: who gets the time – donut of shares plus per-app change vs. the previous period. */
+@Composable
+fun TopAppsPanel(
+    stats: Stats,
+    apps: Map<String, AppInfoEntity>,
+    previousApps: Map<String, Long>,
+    onOpenApp: (String) -> Unit,
+    onSeeAll: () -> Unit,
+) {
+    if (stats.apps.isEmpty()) return
+    val total = stats.apps.sumOf { it.total }.coerceAtLeast(1)
+    val top = stats.apps.take(TOP_N)
+    val other = total - top.sumOf { it.total }
+    Panel(
+        "Top apps",
+        subtitle = "${stats.apps.size} apps used · ${Format.duration(total)}",
+        trailing = {
+            Text("ALL APPS →", style = LabelStyle.copy(color = Palette.Accent), modifier = Modifier.clickable(onClick = onSeeAll).padding(6.dp))
+        },
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            DonutChart(
+                shares = top.mapIndexed { i, a -> a.total to Palette.series[i] } + (other to Palette.TextFaint),
+                centerValue = Format.percent(top.sumOf { it.total }.toDouble() / total),
+                centerLabel = "top $TOP_N",
+                size = 128,
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                top.forEachIndexed { i, a ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onOpenApp(a.packageName) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        StatusDot(Palette.series[i])
+                        Spacer(Modifier.width(7.dp))
+                        Text(apps[a.packageName]?.label ?: a.packageName, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        Text(Format.percent(a.total.toDouble() / total), style = MetaStyle.copy(fontSize = 10.sp), modifier = Modifier.width(32.dp), textAlign = TextAlign.End)
+                    }
+                }
+                if (other > 0) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StatusDot(Palette.TextFaint)
+                        Spacer(Modifier.width(7.dp))
+                        Text("Other ${stats.apps.size - top.size}", fontSize = 12.sp, color = Palette.TextDim, modifier = Modifier.weight(1f))
+                        Text(Format.percent(other.toDouble() / total), style = MetaStyle.copy(fontSize = 10.sp), modifier = Modifier.width(32.dp), textAlign = TextAlign.End)
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Divider()
+        top.forEachIndexed { i, a ->
+            if (i > 0) Divider()
+            Row(
+                Modifier.fillMaxWidth().clickable { onOpenApp(a.packageName) }.padding(vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AppIcon(a.packageName, 28.dp, label = apps[a.packageName]?.label)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(apps[a.packageName]?.label ?: a.packageName, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${a.launches} opens · ⌀ ${Format.durationPrecise(a.avgSession)}", style = MetaStyle.copy(fontSize = 10.sp))
+                }
+                Sparkline(a.buckets, Modifier.width(56.dp), color = Palette.series[i])
+                Spacer(Modifier.width(10.dp))
+                Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(66.dp)) {
+                    Text(Format.duration(a.total), style = NumberStyle.copy(fontSize = 13.sp))
+                    previousApps[a.packageName]?.let { Format.delta(a.total, it) }?.let { DeltaBadge(it) }
+                        ?: Text(if (previousApps.isNotEmpty()) "new" else "", style = MetaStyle.copy(fontSize = 9.sp, color = Palette.Accent))
+                }
+            }
+        }
+    }
+}
+
+/** Stacked bars: how each top app contributes to every day / hour / week of the period. */
+@Composable
+fun AppTimelinePanel(stats: Stats, apps: Map<String, AppInfoEntity>) {
+    if (stats.apps.isEmpty() || stats.buckets.size < 2) return
+    val top = stats.apps.take(TOP_N)
+    val n = stats.buckets.size
+    val other = LongArray(n) { i -> stats.buckets[i].appTime - top.sumOf { it.buckets.getOrElse(i) { 0 } } }.map { it.coerceAtLeast(0) }.toLongArray()
+    val series = top.map { (apps[it.packageName]?.label ?: it.packageName) to it.buckets } + ("Other apps" to other)
+    val (labels, detail) = bucketLabels(stats)
+    Panel("App usage over time", subtitle = "Top $TOP_N apps, ${unitLabel(stats)}") {
+        StackedBarChart(
+            series = series,
+            colors = Palette.series.take(top.size) + Palette.TextFaint,
+            labels = labels,
+            detailLabels = detail,
+            format = Format::duration,
+        )
+    }
+}
 
 @Composable
-fun AppRankingPanel(stats: Stats, apps: Map<String, AppInfoEntity>, onOpenApp: (String) -> Unit) {
+fun AppRankingPanel(
+    stats: Stats,
+    apps: Map<String, AppInfoEntity>,
+    previousApps: Map<String, Long>,
+    onOpenApp: (String) -> Unit,
+) {
     var sort by remember { mutableStateOf(AppSort.TIME) }
     var showAll by remember { mutableStateOf(false) }
     val sorted = when (sort) {
         AppSort.TIME -> stats.apps
         AppSort.LAUNCHES -> stats.apps.sortedByDescending { it.launches }
         AppSort.NOTIFICATIONS -> stats.apps.sortedByDescending { it.notifications }
+        AppSort.CHANGE -> stats.apps.sortedByDescending { it.total - (previousApps[it.packageName] ?: 0) }
     }
     val total = stats.apps.sumOf { it.total }.coerceAtLeast(1)
-    val maxMetric = sorted.maxOfOrNull {
-        when (sort) {
-            AppSort.TIME -> it.total
-            AppSort.LAUNCHES -> it.launches.toLong()
-            AppSort.NOTIFICATIONS -> it.notifications.toLong()
-        }
-    }?.coerceAtLeast(1) ?: 1
     Panel(
-        "App ranking",
-        subtitle = "${stats.apps.size} apps · ${Format.duration(total)} total",
-        trailing = { SegmentedControl(AppSort.entries.map { it to it.label }, sort, { sort = it }, Modifier.width(186.dp), compact = true) },
+        "All apps",
+        subtitle = "${stats.apps.size} apps · ${Format.duration(total)} total · tap for details",
         contentPadding = PaddingValues(top = 6.dp, bottom = 4.dp),
     ) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("SORT", style = LabelStyle.copy(fontSize = 9.sp, color = Palette.TextFaint))
+            Spacer(Modifier.width(10.dp))
+            SegmentedControl(AppSort.entries.map { it to it.label }, sort, { sort = it }, Modifier.weight(1f), compact = true)
+        }
+        Spacer(Modifier.height(6.dp))
         if (sorted.isEmpty()) EmptyHint("No app usage in this period.", Modifier.padding(horizontal = 14.dp))
-        val shown = if (showAll) sorted else sorted.take(15)
+        val shown = if (showAll) sorted else sorted.take(20)
         shown.forEachIndexed { idx, a ->
-            if (idx > 0) Divider(Modifier.padding(start = 14.dp))
-            val metric = when (sort) {
-                AppSort.TIME -> a.total
-                AppSort.LAUNCHES -> a.launches.toLong()
-                AppSort.NOTIFICATIONS -> a.notifications.toLong()
-            }
-            AppRankRow(
+            Divider()
+            AppStatRow(
                 rank = idx + 1,
-                packageName = a.packageName,
+                usage = a,
                 label = apps[a.packageName]?.label ?: a.packageName,
-                value = when (sort) {
-                    AppSort.TIME -> Format.duration(a.total)
-                    AppSort.LAUNCHES -> "${a.launches}×"
-                    AppSort.NOTIFICATIONS -> "${a.notifications}"
-                },
-                fraction = metric.toFloat() / maxMetric,
-                share = Format.percent(a.total.toDouble() / total),
-                meta = "${Format.duration(a.total)} · ${a.launches} opens · ⌀ ${Format.durationPrecise(a.avgSession)}" +
-                    (if (a.notifications > 0) " · ${a.notifications} notif." else ""),
+                total = total,
+                previous = previousApps[a.packageName],
+                hasPrevious = previousApps.isNotEmpty(),
                 onClick = { onOpenApp(a.packageName) },
             )
         }
-        if (sorted.size > 15) {
+        if (sorted.size > 20) {
             Divider()
             Text(
-                if (showAll) "SHOW TOP 15" else "SHOW ALL ${sorted.size}",
+                if (showAll) "SHOW TOP 20" else "SHOW ALL ${sorted.size}",
                 style = LabelStyle.copy(color = Palette.Accent),
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().clickable { showAll = !showAll }.padding(vertical = 12.dp),
             )
+        }
+    }
+}
+
+/** One app with its own mini-dashboard: time, change, share, trend sparkline and key figures. */
+@Composable
+private fun AppStatRow(
+    rank: Int,
+    usage: AppUsage,
+    label: String,
+    total: Long,
+    previous: Long?,
+    hasPrevious: Boolean,
+    onClick: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 11.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(rank.toString().padStart(2, '0'), style = MetaStyle.copy(color = Palette.TextFaint), modifier = Modifier.width(24.dp))
+            AppIcon(usage.packageName, 34.dp, label = label)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(label, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(AppCategories.label(usage.category).uppercase(), style = LabelStyle.copy(fontSize = 8.sp, color = Palette.TextFaint))
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(Format.duration(usage.total), style = NumberStyle.copy(fontSize = 15.sp))
+                when {
+                    previous != null -> Format.delta(usage.total, previous)?.let { DeltaBadge(it) }
+                    hasPrevious -> Text("NEW", style = LabelStyle.copy(fontSize = 9.sp, color = Palette.Accent))
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.padding(start = 24.dp), verticalAlignment = Alignment.Bottom) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ProportionBar(usage.total.toFloat() / total, Palette.Accent, Modifier.weight(1f), height = 3.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(Format.percent(usage.total.toDouble() / total), style = MetaStyle.copy(fontSize = 10.sp, color = Palette.TextDim), modifier = Modifier.width(32.dp), textAlign = TextAlign.End)
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Sparkline(usage.buckets, Modifier.width(72.dp))
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.padding(start = 24.dp)) {
+            MiniStat("Opens", "${usage.launches}", Modifier.weight(1f))
+            MiniStat("Avg", Format.durationPrecise(usage.avgSession), Modifier.weight(1f))
+            MiniStat("Peak", usage.peakHour?.let { "${it.toString().padStart(2, '0')}h" } ?: "–", Modifier.weight(0.8f))
+            MiniStat("Days", "${usage.activeDays}", Modifier.weight(0.7f))
+            MiniStat("Notif.", "${usage.notifications}", Modifier.weight(0.8f))
+        }
+    }
+}
+
+@Composable
+private fun MiniStat(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(label.uppercase(), style = LabelStyle.copy(fontSize = 8.sp, color = Palette.TextFaint))
+        Text(value, style = NumberStyle.copy(fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium), maxLines = 1)
+    }
+}
+
+/** App detail: facts about one app in the period. */
+@Composable
+fun AppFactsPanel(stats: Stats, countNotifications: Boolean) {
+    val usage = stats.apps.firstOrNull() ?: return
+    val zone = ZoneId.systemDefault()
+    val tf = DateTimeFormatter.ofPattern("EEE d MMM, HH:mm")
+    Panel("Usage profile", contentPadding = PaddingValues(0.dp)) {
+        MetricGrid(
+            listOf(
+                { m -> MetricTile("Active days", "${usage.activeDays} / ${stats.days.size}", m, caption = "days with use") },
+                { m -> MetricTile("Per active day", Format.duration(if (usage.activeDays > 0) usage.total / usage.activeDays else 0), m, caption = "average") },
+                { m -> MetricTile("Median session", Format.durationPrecise(usage.medianSession), m, caption = "longest ${Format.durationPrecise(usage.longestSession)}") },
+                { m -> MetricTile("Peak hour", usage.peakHour?.let { "${it.toString().padStart(2, '0')}:00" } ?: "–", m, caption = "most use") },
+                { m -> MetricTile("Opens / day", "%.1f".format(if (stats.days.isNotEmpty()) usage.launches.toDouble() / stats.days.size else 0.0), m, caption = "${usage.launches} in total") },
+                { m -> MetricTile("Notif. / open", if (countNotifications && usage.launches > 0) "%.1f".format(usage.notifications.toDouble() / usage.launches) else "–", m, caption = "${usage.notifications} received") },
+            ),
+        )
+        Divider()
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) {
+            DataRow("First use in period", usage.firstUsed?.let { tf.format(Instant.ofEpochMilli(it).atZone(zone)) } ?: "–")
+            Divider()
+            DataRow("Last used", usage.lastUsed?.let { tf.format(Instant.ofEpochMilli(it).atZone(zone)) } ?: "–")
         }
     }
 }
@@ -444,27 +639,48 @@ fun HighlightsPanel(stats: Stats) {
 }
 
 @Composable
-fun DailyLogPanel(stats: Stats, goalMs: Long) {
+fun DailyLogPanel(stats: Stats, goalMs: Long, apps: Map<String, AppInfoEntity> = emptyMap()) {
     var showAll by remember { mutableStateOf(false) }
     val days = stats.days.reversed()
     val maxT = days.maxOfOrNull { it.screenTime }?.coerceAtLeast(1) ?: 1
     val df = DateTimeFormatter.ofPattern("EEE dd.MM")
-    Panel("Daily log", subtitle = "Newest first", contentPadding = PaddingValues(bottom = 4.dp)) {
-        TableHeader(listOf("Date" to 1.25f, "Time" to 1.15f, "Unl." to 0.6f, "First" to 0.75f, "Last" to 0.75f))
+    val countHeader = if (stats.filtered) "Opens" else "Unl."
+    Panel("Daily log", subtitle = if (stats.filtered) "Newest first" else "Newest first · top apps per day", contentPadding = PaddingValues(bottom = 4.dp)) {
+        TableHeader(listOf("Date" to 1.25f, "Time" to 1.15f, countHeader to 0.6f, "First" to 0.75f, "Last" to 0.75f))
         val shown = if (showAll) days else days.take(31)
         shown.forEachIndexed { idx, d ->
             if (idx > 0) Divider()
-            val over = goalMs > 0 && d.screenTime > goalMs
+            val over = goalMs > 0 && !stats.filtered && d.screenTime > goalMs
             Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(df.format(d.date), style = MetaStyle.copy(color = Palette.Text, fontSize = 12.sp), modifier = Modifier.weight(1.25f))
                     Text(Format.duration(d.screenTime), style = NumberStyle.copy(fontSize = 13.sp, color = if (over) Palette.Bad else Palette.Text), modifier = Modifier.weight(1.15f))
-                    Text("${d.unlocks}", style = NumberStyle.copy(fontSize = 12.sp, color = Palette.TextDim), modifier = Modifier.weight(0.6f))
+                    Text("${if (stats.filtered) d.launches else d.unlocks}", style = NumberStyle.copy(fontSize = 12.sp, color = Palette.TextDim), modifier = Modifier.weight(0.6f))
                     Text(d.firstUseMinute?.let(Format::minuteOfDay) ?: "–", style = MetaStyle.copy(fontSize = 12.sp, color = Palette.TextDim), modifier = Modifier.weight(0.75f))
                     Text(d.lastUseMinute?.let(Format::minuteOfDay) ?: "–", style = MetaStyle.copy(fontSize = 12.sp, color = Palette.TextDim), modifier = Modifier.weight(0.75f))
                 }
                 Spacer(Modifier.height(5.dp))
                 ProportionBar(d.screenTime.toFloat() / maxT, if (over) Palette.Bad else Palette.Accent, height = 2.dp)
+                if (!stats.filtered && d.topApps.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        d.topApps.forEach { (pkg, t) ->
+                            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                                AppIcon(pkg, 16.dp, label = apps[pkg]?.label)
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    apps[pkg]?.label ?: pkg.substringAfterLast('.'),
+                                    style = MetaStyle.copy(fontSize = 10.sp, color = Palette.TextDim),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Spacer(Modifier.width(3.dp))
+                                Text(Format.duration(t), style = NumberStyle.copy(fontSize = 10.sp, color = Palette.Text, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal), maxLines = 1)
+                            }
+                        }
+                        repeat(3 - d.topApps.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
             }
         }
         if (days.size > 31) {

@@ -53,7 +53,19 @@ data class AppUsage(
     val notifications: Int,
     val lastUsed: Long?,
     val category: Int,
-)
+    /** Time per bucket of [Stats.buckets]. */
+    val buckets: LongArray = LongArray(0),
+    /** Launches per bucket of [Stats.buckets]. */
+    val launchBuckets: IntArray = IntArray(0),
+    /** Time per hour of day (0..23). */
+    val hourly: LongArray = LongArray(24),
+    val medianSession: Long = 0,
+    val firstUsed: Long? = null,
+    /** Number of calendar days in the range on which the app was used. */
+    val activeDays: Int = 0,
+) {
+    val peakHour: Int? get() = hourly.indices.maxByOrNull { hourly[it] }?.takeIf { hourly[it] > 0 }
+}
 
 data class CategoryUsage(val category: Int, val total: Long, val apps: Int)
 
@@ -67,6 +79,10 @@ data class DayHabit(
     val firstUseMinute: Int?,
     /** Minutes after local midnight of the last screen-off following an unlock that day. */
     val lastUseMinute: Int?,
+    val appTime: Long = 0,
+    val launches: Int = 0,
+    /** Most used apps that day, (package, time), up to three. */
+    val topApps: List<Pair<String, Long>> = emptyList(),
 )
 
 data class DistributionBin(val label: String, val maxMs: Long, val count: Int, val total: Long)
@@ -190,6 +206,17 @@ object StatsCalculator {
         )
     }
 
+    /** Time per included app in the query range (for per-app comparisons with another period). */
+    fun appTotals(input: StatsInput, q: StatsQuery): Map<String, Long> {
+        val out = HashMap<String, Long>()
+        for (a in input.appSessions) {
+            if (!appIncluded(a.packageName, q, input.categories)) continue
+            val o = overlap(a.start, a.end, q.range.start, q.range.end)
+            if (o > 0) out[a.packageName] = (out[a.packageName] ?: 0) + o
+        }
+        return out
+    }
+
     fun calculate(input: StatsInput, q: StatsQuery): Stats {
         val r = q.range
         val zone = q.zone
@@ -228,6 +255,17 @@ object StatsCalculator {
         val apps = includedApps.groupBy { it.packageName }.map { (pkg, list) ->
             val total = list.sumOf { overlap(it.start, it.end, r.start, r.end) }
             val launches = list.count { it.start in r }
+            val appBuckets = LongArray(nb)
+            val appLaunchBuckets = IntArray(nb)
+            val appHeat = Array(7) { LongArray(24) }
+            val activeDays = HashSet<LocalDate>()
+            for (a in list) {
+                distribute(a.start, a.end, bounds, appBuckets)
+                bucketOf(a.start, bounds).takeIf { it >= 0 }?.let { appLaunchBuckets[it]++ }
+                addToHeatmap(maxOf(a.start, r.start), minOf(a.end, r.end), zone, appHeat)
+                if (a.start in r) activeDays += TimeRanges.localDate(a.start, zone)
+            }
+            val lengths = list.filter { it.start in r }.map { it.end - it.start }.sorted()
             AppUsage(
                 packageName = pkg,
                 total = total,
@@ -237,6 +275,12 @@ object StatsCalculator {
                 notifications = notifByPkg[pkg] ?: 0,
                 lastUsed = list.maxOf { it.end },
                 category = input.categories[pkg] ?: AppCategories.UNDEFINED,
+                buckets = appBuckets,
+                launchBuckets = appLaunchBuckets,
+                hourly = LongArray(24) { h -> appHeat.sumOf { it[h] } },
+                medianSession = median(lengths),
+                firstUsed = list.minOf { maxOf(it.start, r.start) },
+                activeDays = activeDays.size,
             )
         }.filter { it.total > 0 }.sortedByDescending { it.total }
 
@@ -363,12 +407,21 @@ object StatsCalculator {
             val time = if (filtered) apps.sumOf { overlap(it.start, it.end, dr.start, dr.end) }
             else unlocked.sumOf { overlap(it.unlockAt!!, it.end, dr.start, dr.end) }
             val starting = unlocked.filter { it.unlockAt!! in dr }
+            val dayApps = apps.filter { it.end > dr.start && it.start < dr.end }
+            val perApp = dayApps.groupBy { it.packageName }
+                .mapValues { (_, l) -> l.sumOf { overlap(it.start, it.end, dr.start, dr.end) } }
+            val appStarts = dayApps.filter { it.start in dr }
             out += DayHabit(
                 date = d,
                 screenTime = time,
                 unlocks = input.unlocks.count { it in dr },
-                firstUseMinute = starting.minOfOrNull { it.unlockAt!! }?.let { minuteOfDay(it, dr.start) },
-                lastUseMinute = starting.maxOfOrNull { it.end }?.let { minuteOfDay(it, dr.start) },
+                firstUseMinute = if (filtered) appStarts.minOfOrNull { it.start }?.let { minuteOfDay(it, dr.start) }
+                else starting.minOfOrNull { it.unlockAt!! }?.let { minuteOfDay(it, dr.start) },
+                lastUseMinute = if (filtered) appStarts.maxOfOrNull { it.end }?.let { minuteOfDay(it, dr.start) }
+                else starting.maxOfOrNull { it.end }?.let { minuteOfDay(it, dr.start) },
+                appTime = perApp.values.sum(),
+                launches = appStarts.size,
+                topApps = perApp.entries.sortedByDescending { it.value }.take(3).map { it.key to it.value },
             )
             d = d.plusDays(1)
         }

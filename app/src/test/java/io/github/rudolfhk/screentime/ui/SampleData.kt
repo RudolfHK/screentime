@@ -120,6 +120,7 @@ object SampleData {
             selection = selection,
             stats = StatsCalculator.calculate(input, q),
             previous = prev?.let { StatsCalculator.summarize(input, q.copy(range = it)) },
+            previousApps = prev?.let { StatsCalculator.appTotals(input, q.copy(range = it)) } ?: emptyMap(),
             apps = appInfo,
             settings = settings,
             firstTrackedAt = first,

@@ -409,7 +409,7 @@ fun AppIcon(packageName: String, size: Dp = 34.dp, label: String? = null) {
         if (bmp != null) {
             Image(bmp, contentDescription = null, modifier = Modifier.size(size))
         } else {
-            Text((label ?: packageName.substringAfterLast('.')).take(1).uppercase(), color = Palette.TextDim, fontFamily = Mono, fontWeight = FontWeight.SemiBold)
+            Text((label ?: packageName.substringAfterLast('.')).take(1).uppercase(), color = Palette.TextDim, fontFamily = Mono, fontWeight = FontWeight.SemiBold, fontSize = (size.value * 0.45f).sp, lineHeight = (size.value * 0.5f).sp)
         }
     }
 }

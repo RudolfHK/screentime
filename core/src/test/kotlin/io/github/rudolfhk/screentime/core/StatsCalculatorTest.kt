@@ -200,6 +200,42 @@ class StatsCalculatorTest {
     private fun day0() = day
 
     @Test
+    fun `per-app breakdown over time`() {
+        val day = 24 * h
+        val apps = listOf(
+            AppSession("social", d0 + 9 * h, d0 + 9 * h + 20 * m),            // Mon 09:00
+            AppSession("social", d0 + day + 21 * h, d0 + day + 21 * h + 40 * m), // Tue 21:00
+            AppSession("work", d0 + day + 10 * h, d0 + day + 10 * h + 5 * m),
+        )
+        val week = TimeRanges.resolve(PeriodSelection(RangeKind.WEEK, day0()), zone, 0, d0 + 30 * day)
+        val s = StatsCalculator.calculate(input(emptyList(), apps), query(range = week))
+        val social = s.apps.first { it.packageName == "social" }
+        assertEquals(listOf(20 * m, 40 * m, 0L, 0L, 0L, 0L, 0L), social.buckets.toList())
+        assertEquals(listOf(1, 1, 0, 0, 0, 0, 0), social.launchBuckets.toList())
+        assertEquals(40 * m, social.hourly[21])
+        assertEquals(21, social.peakHour)
+        assertEquals(2, social.activeDays)
+        assertEquals(30 * m, social.medianSession)
+        assertEquals(d0 + 9 * h, social.firstUsed)
+
+        val tuesday = s.days[1]
+        assertEquals(listOf("social" to 40 * m, "work" to 5 * m), tuesday.topApps)
+        assertEquals(45 * m, tuesday.appTime)
+        assertEquals(2, tuesday.launches)
+
+        val totals = StatsCalculator.appTotals(input(emptyList(), apps), query(range = week))
+        assertEquals(mapOf("social" to 60 * m, "work" to 5 * m), totals)
+    }
+
+    @Test
+    fun `filtered day habits use app sessions for first and last use`() {
+        val apps = listOf(AppSession("social", d0 + 8 * h, d0 + 8 * h + 10 * m), AppSession("social", d0 + 22 * h, d0 + 22 * h + 5 * m))
+        val s = StatsCalculator.calculate(input(emptyList(), apps), query(packages = setOf("social")))
+        assertEquals(8 * 60, s.days.single().firstUseMinute)
+        assertEquals(22 * 60 + 5, s.days.single().lastUseMinute)
+    }
+
+    @Test
     fun `format helpers`() {
         assertEquals("3h 12m", Format.duration(3 * h + 12 * m))
         assertEquals("45m", Format.duration(45 * m))

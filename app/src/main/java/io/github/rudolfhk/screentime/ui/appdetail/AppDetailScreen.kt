@@ -41,7 +41,9 @@ import io.github.rudolfhk.screentime.ui.components.Divider
 import io.github.rudolfhk.screentime.ui.components.EmptyHint
 import io.github.rudolfhk.screentime.ui.components.Gutter
 import io.github.rudolfhk.screentime.ui.components.Panel
+import io.github.rudolfhk.screentime.ui.stats.AppFactsPanel
 import io.github.rudolfhk.screentime.ui.stats.ComparisonPanel
+import io.github.rudolfhk.screentime.ui.stats.DailyLogPanel
 import io.github.rudolfhk.screentime.ui.stats.HeatmapPanel
 import io.github.rudolfhk.screentime.ui.stats.HourlyPanel
 import io.github.rudolfhk.screentime.ui.stats.PeriodControls
@@ -108,27 +110,14 @@ fun AppDetailContent(
             val b = bundle ?: run { EmptyHint("Loading…"); return@Column }
             val st = b.stats
             SummaryPanel(st, b.previous, b.settings.countNotifications)
+            AppFactsPanel(st, b.settings.countNotifications)
             TrendPanel(st, 0)
             ComparisonPanel(st, b.previous)
             HourlyPanel(st)
             HeatmapPanel(st)
             WeekdayPanel(st)
             SessionLengthPanel(st)
-            val usage = st.apps.firstOrNull()
-            if (usage != null) {
-                Panel("Details", contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)) {
-                    val tf = DateTimeFormatter.ofPattern("EEE d MMM, HH:mm")
-                    DataRow("Last used", usage.lastUsed?.let { tf.format(Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault())) } ?: "–")
-                    Divider()
-                    DataRow("Longest single session", Format.durationPrecise(usage.longestSession))
-                    Divider()
-                    DataRow("Avg per launch", Format.durationPrecise(usage.avgSession))
-                    if (b.settings.countNotifications && usage.launches > 0) {
-                        Divider()
-                        DataRow("Notifications per launch", "%.1f".format(usage.notifications.toDouble() / usage.launches))
-                    }
-                }
-            }
+            DailyLogPanel(st, 0, b.apps)
             Spacer(Modifier.height(20.dp))
         }
     }

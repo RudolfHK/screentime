@@ -83,6 +83,7 @@ class ScreenshotTest {
 
     @Test fun statsOverview() = stats("03_stats_overview", StatsSection.OVERVIEW)
     @Test fun statsApps() = stats("04_stats_apps", StatsSection.APPS)
+    @Test fun statsAppsMonth() = stats("04b_stats_apps_month", StatsSection.APPS, PeriodSelection(RangeKind.MONTH, SampleData.today))
     @Test fun statsPatterns() = stats("05_stats_patterns", StatsSection.PATTERNS, PeriodSelection(RangeKind.MONTH, SampleData.today))
     @Test fun statsDays() = stats("06_stats_days", StatsSection.DAYS, PeriodSelection(RangeKind.MONTH, SampleData.today))
 

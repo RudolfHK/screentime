@@ -33,6 +33,8 @@ data class StatsBundle(
     val apps: Map<String, AppInfoEntity>,
     val settings: Settings,
     val firstTrackedAt: Long?,
+    /** Time per app in the previous period, for per-app change badges. */
+    val previousApps: Map<String, Long> = emptyMap(),
     /** Screen sessions (start, end, unlocked) – only filled for single-day ranges. */
     val timeline: List<Triple<Long, Long, Boolean>> = emptyList(),
 )
@@ -78,6 +80,7 @@ class StatsRepository(private val db: AppDatabase, private val settingsStore: Se
                         selection = selection,
                         stats = StatsCalculator.calculate(input, q),
                         previous = prevRange?.let { StatsCalculator.summarize(input, q.copy(range = it)) },
+                        previousApps = prevRange?.let { StatsCalculator.appTotals(input, q.copy(range = it)) } ?: emptyMap(),
                         apps = apps,
                         settings = cfg.settings,
                         firstTrackedAt = cfg.firstTrackedAt,

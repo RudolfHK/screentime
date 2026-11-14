@@ -162,12 +162,14 @@ fun StatsContent(
                         StatsSection.OVERVIEW -> {
                             SummaryPanel(st, b.previous, b.settings.countNotifications)
                             TrendPanel(st, goal)
+                            TopAppsPanel(st, b.apps, b.previousApps, onOpenApp, onSeeAll = { section = StatsSection.APPS })
                             ComparisonPanel(st, b.previous)
                             CoveragePanel(st)
                         }
                         StatsSection.APPS -> {
                             if (filter.category == null) CategoryPanel(st, onSelectCategory = onSetCategory)
-                            AppRankingPanel(st, b.apps, onOpenApp)
+                            AppTimelinePanel(st, b.apps)
+                            AppRankingPanel(st, b.apps, b.previousApps, onOpenApp)
                         }
                         StatsSection.PATTERNS -> {
                             HourlyPanel(st)
@@ -179,7 +181,7 @@ fun StatsContent(
                         }
                         StatsSection.DAYS -> {
                             HighlightsPanel(st)
-                            DailyLogPanel(st, goal)
+                            DailyLogPanel(st, goal, b.apps)
                         }
                     }
                 }

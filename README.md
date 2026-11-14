@@ -6,11 +6,11 @@ An Android app that records detailed screen time data that built-in tools summar
 
 - **Tracker tab**: status panel with today's screen time, goal progress and the start/stop action; today's metrics (unlocks, glances, sessions, first unlock, notifications), a 24-hour session timeline, top apps and system status.
 - **Statistics tab**: day, week, month, all-time or custom range with ‹ › navigation; filter by apps and category. Four sections:
-  - *Overview*: 10 KPIs with change vs. the previous period, trend chart (time or unlocks) with min/avg/max/total and goal line, a period comparison table, and data-quality coverage
-  - *Apps*: category mix and an app ranking sortable by time, opens or notifications
+  - *Overview*: 10 KPIs with change vs. the previous period, trend chart (time or unlocks) with min/avg/max/total and goal line, top apps (donut of shares, per-app sparkline and change vs. the previous period), a period comparison table, and data-quality coverage
+  - *Apps*: category mix, stacked "app usage over time" chart (tap a bar for the per-app split of that hour/day/week), and every app with its own mini-dashboard: time, change, share, trend sparkline, opens, average session, peak hour, active days and notifications; sortable by time, opens, notifications or change
   - *Patterns*: hour-of-day profile, weekday × hour heatmap, weekday averages (weekdays vs. weekend), habits (first/last use, night use, median gap, longest phone-free stretch), session lengths, and goal streaks
-  - *Days*: busiest/quietest day highlights and a daily log (time, unlocks, first and last use)
-- **App detail**: all of the above for a single app, plus last used, longest session and notifications per launch.
+  - *Days*: busiest/quietest day highlights and a daily log (time, unlocks, first and last use, top three apps of each day)
+- **App detail** (tap any app): the same analysis for one app over any day/week/month/all-time/custom range – summary with changes, usage profile (active days, per active day, median and longest session, peak hour, opens per day, notifications per open, first and last use), time/opens trend, period comparison, hour-of-day profile, weekday × hour heatmap, weekday averages, session lengths and a daily log.
 - **Settings**:
   - sync interval and daily goal
   - retention and excluded apps (launcher, keyboard and system UI are excluded by default)
@@ -28,9 +28,9 @@ Rendered from sample data by the screenshot tests (`./gradlew :app:testDebugUnit
 | --- | --- | --- |
 | ![Tracker](docs/screenshots/01_tracker.png) | ![Overview](docs/screenshots/03_stats_overview.png) | ![Patterns](docs/screenshots/05_stats_patterns.png) |
 
-| Statistics: apps | Statistics: days | Settings |
+| Statistics: apps | App detail | Statistics: days |
 | --- | --- | --- |
-| ![Apps](docs/screenshots/04_stats_apps.png) | ![Days](docs/screenshots/06_stats_days.png) | ![Settings](docs/screenshots/08_settings.png) |
+| ![Apps](docs/screenshots/04_stats_apps.png) | ![App detail](docs/screenshots/07_app_detail.png) | ![Days](docs/screenshots/06_stats_days.png) |
 
 ## How it works (battery)
 
