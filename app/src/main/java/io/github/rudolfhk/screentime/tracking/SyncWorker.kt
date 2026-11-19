@@ -18,7 +18,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     override suspend fun doWork(): Result {
         val container = (applicationContext as ScreenTimeApp).container
         return try {
-            container.tracking.sync()
+            container.tracking.sync(TrackingManager.SOURCE_WORKER)
             Result.success()
         } catch (e: Exception) {
             if (runAttemptCount < 3) Result.retry() else Result.failure()

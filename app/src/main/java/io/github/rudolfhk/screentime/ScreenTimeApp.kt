@@ -9,6 +9,8 @@ import io.github.rudolfhk.screentime.data.StatsRepository
 import io.github.rudolfhk.screentime.tracking.AppInfoResolver
 import io.github.rudolfhk.screentime.tracking.TrackingManager
 import io.github.rudolfhk.screentime.tracking.UsageEventSource
+import io.github.rudolfhk.screentime.tracking.Permissions
+import io.github.rudolfhk.screentime.tracking.WorkManagerScheduling
 import io.github.rudolfhk.screentime.widget.WidgetUpdater
 
 class ScreenTimeApp : Application() {
@@ -31,7 +33,15 @@ class AppContainer(context: Context) {
     val stats: StatsRepository by lazy { StatsRepository(db, settings) }
     val widgets = WidgetUpdater(app) { stats }
     val tracking: TrackingManager by lazy {
-        TrackingManager(app, db, settings, UsageEventSource(app), appInfo, widgets)
+        TrackingManager(
+            db = db,
+            settings = settings,
+            source = UsageEventSource(app),
+            appInfo = appInfo,
+            scheduler = WorkManagerScheduling(app),
+            hasUsageAccess = { Permissions.hasUsageAccess(app) },
+            onDataChanged = { widgets.updateAll() },
+        )
     }
     val backup: BackupManager by lazy { BackupManager(app, db, settings, stats) }
 }

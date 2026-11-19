@@ -32,6 +32,10 @@ data class Settings(
     val countNotifications: Boolean = false,
     val appLock: Boolean = false,
     val hasEverTracked: Boolean = false,
+    /** True from the first start until the first sync has adjusted the backfilled period. */
+    val backfillPending: Boolean = false,
+    /** One-time repair of periods damaged by the old backfill bug has run. */
+    val periodRepairDone: Boolean = false,
 )
 
 class SettingsStore(private val context: Context) {
@@ -49,6 +53,8 @@ class SettingsStore(private val context: Context) {
         val countNotifications = booleanPreferencesKey("count_notifications")
         val appLock = booleanPreferencesKey("app_lock")
         val hasEverTracked = booleanPreferencesKey("has_ever_tracked")
+        val backfillPending = booleanPreferencesKey("backfill_pending")
+        val periodRepairDone = booleanPreferencesKey("period_repair_done")
     }
 
     val settings: Flow<Settings> = context.dataStore.data.map { p ->
@@ -65,17 +71,28 @@ class SettingsStore(private val context: Context) {
             countNotifications = p[Keys.countNotifications] ?: false,
             appLock = p[Keys.appLock] ?: false,
             hasEverTracked = p[Keys.hasEverTracked] ?: false,
+            backfillPending = p[Keys.backfillPending] ?: false,
+            periodRepairDone = p[Keys.periodRepairDone] ?: false,
         )
     }
 
     suspend fun current(): Settings = settings.first()
 
-    suspend fun startTracking(clipFrom: Long, queryFrom: Long) = context.dataStore.edit {
+    suspend fun startTracking(clipFrom: Long, queryFrom: Long, backfill: Boolean = false) = context.dataStore.edit {
         it[Keys.trackingEnabled] = true
         it[Keys.clipFrom] = clipFrom
         it[Keys.queryFrom] = queryFrom
         it[Keys.hasEverTracked] = true
+        it[Keys.backfillPending] = backfill
+        // A fresh start never needs the legacy repair.
+        if (backfill) it[Keys.periodRepairDone] = true
     }
+
+    /** Test hook: forget all settings. */
+    internal suspend fun resetForTest() = context.dataStore.edit { it.clear() }
+
+    suspend fun finishBackfill() = context.dataStore.edit { it[Keys.backfillPending] = false }
+    suspend fun markPeriodRepairDone() = context.dataStore.edit { it[Keys.periodRepairDone] = true }
 
     suspend fun stopTracking() = context.dataStore.edit { it[Keys.trackingEnabled] = false }
 

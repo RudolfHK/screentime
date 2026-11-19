@@ -46,6 +46,7 @@ import io.github.rudolfhk.screentime.ui.stats.ComparisonPanel
 import io.github.rudolfhk.screentime.ui.stats.DailyLogPanel
 import io.github.rudolfhk.screentime.ui.stats.HeatmapPanel
 import io.github.rudolfhk.screentime.ui.stats.HourlyPanel
+import io.github.rudolfhk.screentime.ui.stats.NotificationsPanel
 import io.github.rudolfhk.screentime.ui.stats.PeriodControls
 import io.github.rudolfhk.screentime.ui.stats.SessionLengthPanel
 import io.github.rudolfhk.screentime.ui.stats.SummaryPanel
@@ -112,11 +113,12 @@ fun AppDetailContent(
             SummaryPanel(st, b.previous, b.settings.countNotifications)
             AppFactsPanel(st, b.settings.countNotifications)
             TrendPanel(st, 0)
-            ComparisonPanel(st, b.previous)
+            ComparisonPanel(st, b.previous, b.previousRange, b.partialComparison, b.settings.countNotifications)
             HourlyPanel(st)
             HeatmapPanel(st)
             WeekdayPanel(st)
             SessionLengthPanel(st)
+            NotificationsPanel(st, b.apps, b.settings.countNotifications)
             DailyLogPanel(st, 0, b.apps)
             Spacer(Modifier.height(20.dp))
         }

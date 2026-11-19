@@ -136,4 +136,23 @@ class SessionBuilderTest {
         assertEquals(listOf(ScreenSession(10, 300, 20)), r.screenSessions)
         assertEquals(10L, r.firstEventAt)
     }
+
+    @Test
+    fun `device without lock screen counts app use as unlocked`() {
+        val r = SessionBuilder.build(
+            listOf(ev(SCREEN_ON, 0), ev(APP_RESUMED, 100, "a"), ev(APP_PAUSED, 900, "a"), ev(SCREEN_OFF, 1000)),
+            0, 2000,
+        )
+        assertEquals(listOf(ScreenSession(0, 1000, 100)), r.screenSessions)
+        assertEquals(emptyList<Long>(), r.unlocks)
+    }
+
+    @Test
+    fun `real unlock replaces implicit one`() {
+        val r = SessionBuilder.build(
+            listOf(ev(SCREEN_ON, 0), ev(APP_RESUMED, 50, "lock.camera"), ev(UNLOCK, 300), ev(SCREEN_OFF, 1000)),
+            0, 2000,
+        )
+        assertEquals(300L, r.screenSessions.single().unlockAt)
+    }
 }

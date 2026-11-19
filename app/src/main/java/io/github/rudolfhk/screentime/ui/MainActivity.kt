@@ -125,7 +125,10 @@ class MainActivity : FragmentActivity() {
             batteryUnrestricted = Permissions.isIgnoringBatteryOptimizations(this),
         )
         // Opening the app always shows fresh numbers.
-        lifecycleScope.launch { container.tracking.sync() }
+        lifecycleScope.launch {
+            container.tracking.sync()
+            if (container.settings.current().countNotifications) Permissions.rebindNotificationListener(this@MainActivity)
+        }
     }
 
     override fun onDestroy() {

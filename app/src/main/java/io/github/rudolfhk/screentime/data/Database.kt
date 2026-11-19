@@ -1,6 +1,7 @@
 package io.github.rudolfhk.screentime.data
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
@@ -70,6 +71,31 @@ data class DataGapEntity(
     @ColumnInfo(name = "end_ts") val end: Long,
 )
 
+/**
+ * Audit log of what the tracker did: start / stop, backfill, every sync, detected gaps, imports.
+ * Shown under "Data quality" so coverage can be checked against real events.
+ */
+@Entity(tableName = "tracking_log", indices = [Index("type")])
+data class TrackingLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val ts: Long,
+    val type: String,
+    /** For SYNC: number of events read. For BACKFILL: the oldest timestamp found. */
+    val value: Long = 0,
+    val detail: String? = null,
+)
+
+object LogType {
+    const val STARTED = "STARTED"
+    const val STOPPED = "STOPPED"
+    const val BACKFILL = "BACKFILL"
+    const val SYNC = "SYNC"
+    const val GAP = "GAP"
+    const val CLEARED = "CLEARED"
+    const val IMPORTED = "IMPORTED"
+    const val REPAIRED = "REPAIRED"
+}
+
 data class AppSessionRow(
     @ColumnInfo(name = "pkg") val packageName: String,
     @ColumnInfo(name = "start_ts") val start: Long,
@@ -108,6 +134,25 @@ interface UsageDao {
 
     @Query("DELETE FROM tracking_periods WHERE start_ts = :start")
     suspend fun deletePeriod(start: Long)
+
+    @Insert
+    suspend fun insertLog(row: TrackingLogEntity)
+
+    @Query("SELECT * FROM tracking_log ORDER BY ts DESC, id DESC LIMIT :limit")
+    fun recentLog(limit: Int): Flow<List<TrackingLogEntity>>
+
+    /** All non-sync entries (start, stop, backfill, gaps, …) plus syncs since [syncsSince]. */
+    @Query("SELECT * FROM tracking_log WHERE type != 'SYNC' OR ts >= :syncsSince ORDER BY ts DESC, id DESC")
+    fun log(syncsSince: Long): Flow<List<TrackingLogEntity>>
+
+    @Query("DELETE FROM tracking_log WHERE type = 'SYNC' AND ts < :before")
+    suspend fun pruneSyncLog(before: Long)
+
+    @Query("SELECT MIN(start_ts) FROM screen_sessions WHERE start_ts >= :from")
+    suspend fun firstScreenSessionSince(from: Long): Long?
+
+    @Query("SELECT * FROM tracking_periods WHERE backfilled = 1 ORDER BY start_ts LIMIT 1")
+    suspend fun firstBackfilledPeriod(): TrackingPeriodEntity?
 
     // --- import (IGNORE: never overwrite what is already on this device) ---
 
@@ -200,20 +245,22 @@ interface UsageDao {
     @Query("DELETE FROM notifications") suspend fun clearNotifications()
     @Query("DELETE FROM tracking_periods") suspend fun clearPeriods()
     @Query("DELETE FROM data_gaps") suspend fun clearGaps()
+    @Query("DELETE FROM tracking_log") suspend fun clearLog()
 
     @Transaction
     suspend fun clearAll() {
-        clearScreen(); clearApps(); clearUnlocks(); clearNotifications(); clearPeriods(); clearGaps()
+        clearScreen(); clearApps(); clearUnlocks(); clearNotifications(); clearPeriods(); clearGaps(); clearLog()
     }
 }
 
 @Database(
     entities = [
         ScreenSessionEntity::class, UnlockEntity::class, AppSessionEntity::class, NotificationEntity::class,
-        AppInfoEntity::class, TrackingPeriodEntity::class, DataGapEntity::class,
+        AppInfoEntity::class, TrackingPeriodEntity::class, DataGapEntity::class, TrackingLogEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
+    autoMigrations = [AutoMigration(from = 1, to = 2)],
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun usageDao(): UsageDao

@@ -12,6 +12,8 @@ import io.github.rudolfhk.screentime.core.StatsQuery
 import io.github.rudolfhk.screentime.core.TimeRanges
 import io.github.rudolfhk.screentime.core.TrackingPeriod
 import io.github.rudolfhk.screentime.data.AppInfoEntity
+import io.github.rudolfhk.screentime.data.LogType
+import io.github.rudolfhk.screentime.data.TrackingLogEntity
 import io.github.rudolfhk.screentime.data.Settings
 import io.github.rudolfhk.screentime.data.StatsBundle
 import java.time.LocalDate
@@ -110,17 +112,33 @@ object SampleData {
         return 0
     }
 
+    val log: List<TrackingLogEntity> by lazy {
+        val now = System.currentTimeMillis()
+        val start = input.trackingPeriods.first().start
+        val syncs = (0 until 48).map { i ->
+            TrackingLogEntity(ts = now - 4 * M - i * 30 * M, type = LogType.SYNC, value = 40L + i, detail = if (i % 6 == 0) "app" else "background")
+        }
+        (syncs + listOf(
+            TrackingLogEntity(ts = start + 2 * M, type = LogType.BACKFILL, value = start),
+            TrackingLogEntity(ts = start + M, type = LogType.STARTED),
+        )).sortedByDescending { it.ts }
+    }
+
     fun bundle(selection: PeriodSelection, packages: Set<String>? = null): StatsBundle {
         val now = System.currentTimeMillis()
         val first = input.trackingPeriods.first().start
         val range = TimeRanges.resolve(selection, zone, first, now)
         val q = StatsQuery(range, zone, now, packages = packages, dailyGoalMs = settings.dailyGoalMinutes * M)
-        val prev = TimeRanges.previous(selection)?.let { TimeRanges.resolve(it, zone, first, now) }
+        val fullPrev = TimeRanges.previous(selection)?.let { TimeRanges.resolve(it, zone, first, now) }
+        val prev = fullPrev?.let { TimeRanges.comparablePrevious(range, it, now) }
         return StatsBundle(
             selection = selection,
             stats = StatsCalculator.calculate(input, q),
             previous = prev?.let { StatsCalculator.summarize(input, q.copy(range = it)) },
             previousApps = prev?.let { StatsCalculator.appTotals(input, q.copy(range = it)) } ?: emptyMap(),
+            previousRange = prev,
+            partialComparison = prev != null && prev != fullPrev,
+            log = log,
             apps = appInfo,
             settings = settings,
             firstTrackedAt = first,

@@ -3,6 +3,7 @@ package io.github.rudolfhk.screentime.tracking
 import android.Manifest
 import android.app.AppOpsManager
 import android.content.ActivityNotFoundException
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -11,6 +12,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.os.Process
 import android.provider.Settings
+import android.service.notification.NotificationListenerService
 import androidx.core.app.NotificationManagerCompat
 
 object Permissions {
@@ -37,6 +39,19 @@ object Permissions {
 
     fun hasNotificationAccess(context: Context): Boolean =
         NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+
+    /**
+     * Some devices don't re-bind a notification listener after an app update or process death,
+     * which silently stops counting. Asking for a rebind is cheap and harmless when it's bound.
+     */
+    fun rebindNotificationListener(context: Context) {
+        if (!hasNotificationAccess(context)) return
+        try {
+            NotificationListenerService.requestRebind(ComponentName(context, NotificationCounterService::class.java))
+        } catch (e: RuntimeException) {
+            // Not fatal: counting resumes once the system binds the service itself.
+        }
+    }
 
     fun openNotificationAccessSettings(context: Context) {
         start(context, Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))

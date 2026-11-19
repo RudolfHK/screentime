@@ -32,6 +32,7 @@ import io.github.rudolfhk.screentime.core.Format
 import io.github.rudolfhk.screentime.core.Granularity
 import io.github.rudolfhk.screentime.core.Stats
 import io.github.rudolfhk.screentime.core.Summary
+import io.github.rudolfhk.screentime.core.TimeRange
 import io.github.rudolfhk.screentime.core.TimeRanges
 import io.github.rudolfhk.screentime.data.AppInfoEntity
 import io.github.rudolfhk.screentime.ui.components.AppRankRow
@@ -59,7 +60,6 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 private val NoPadding = PaddingValues(0.dp)
-private const val MIN_UNTRACKED_MS = 5 * 60_000L
 
 // ---------------------------------------------------------------------------------------------
 // Overview
@@ -164,24 +164,44 @@ fun TrendPanel(stats: Stats, goalMs: Long) {
 
 /** Side-by-side table of this period vs. the previous one. */
 @Composable
-fun ComparisonPanel(stats: Stats, previous: Summary?) {
+fun ComparisonPanel(
+    stats: Stats,
+    previous: Summary?,
+    previousRange: TimeRange? = null,
+    partial: Boolean = false,
+    countNotifications: Boolean = true,
+) {
     if (previous == null) return
     val s = stats.summary
     data class Line(val label: String, val now: Long, val prev: Long, val fmt: (Long) -> String, val increaseIsBad: Boolean = true)
-    val lines = if (stats.filtered) listOf(
-        Line("App time", s.appTime, previous.appTime, Format::duration),
-        Line("Launches", s.appLaunches.toLong(), previous.appLaunches.toLong(), { "$it" }),
-        Line("Avg / day", s.avgPerDay, previous.avgPerDay, Format::duration),
-        Line("Notifications", s.notifications.toLong(), previous.notifications.toLong(), { "$it" }),
-    ) else listOf(
-        Line("Screen time", s.screenTime, previous.screenTime, Format::duration),
-        Line("Avg / day", s.avgPerDay, previous.avgPerDay, Format::duration),
-        Line("Unlocks", s.unlocks.toLong(), previous.unlocks.toLong(), { "$it" }),
-        Line("Avg session", s.avgSession, previous.avgSession, Format::durationPrecise),
-        Line("Glances", s.glances.toLong(), previous.glances.toLong(), { "$it" }),
-        Line("Notifications", s.notifications.toLong(), previous.notifications.toLong(), { "$it" }),
-    )
-    Panel("Period comparison", subtitle = "This period vs. the one before", contentPadding = NoPadding) {
+    val lines = buildList {
+        if (stats.filtered) {
+            add(Line("App time", s.appTime, previous.appTime, Format::duration))
+            add(Line("Launches", s.appLaunches.toLong(), previous.appLaunches.toLong(), { "$it" }))
+            add(Line("Avg / day", s.avgPerDay, previous.avgPerDay, Format::duration))
+        } else {
+            add(Line("Screen time", s.screenTime, previous.screenTime, Format::duration))
+            add(Line("Avg / day", s.avgPerDay, previous.avgPerDay, Format::duration))
+            add(Line("Unlocks", s.unlocks.toLong(), previous.unlocks.toLong(), { "$it" }))
+            add(Line("Avg session", s.avgSession, previous.avgSession, Format::durationPrecise))
+            add(Line("Glances", s.glances.toLong(), previous.glances.toLong(), { "$it" }))
+            add(Line("App launches", s.appLaunches.toLong(), previous.appLaunches.toLong(), { "$it" }))
+        }
+        if (countNotifications) add(Line("Notifications", s.notifications.toLong(), previous.notifications.toLong(), { "$it" }))
+    }
+    val zone = ZoneId.systemDefault()
+    val df = DateTimeFormatter.ofPattern("EEE d MMM HH:mm")
+    val window = previousRange?.let {
+        df.format(Instant.ofEpochMilli(it.start).atZone(zone)) + " → " + df.format(Instant.ofEpochMilli(it.end).atZone(zone))
+    }
+    Panel(
+        "Period comparison",
+        subtitle = if (partial) "Still running · vs. the same elapsed time before" else "This period vs. the one before",
+        contentPadding = NoPadding,
+    ) {
+        if (window != null) {
+            Text("PREV. = $window", style = MetaStyle.copy(fontSize = 10.sp), modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 8.dp))
+        }
         TableHeader(listOf("Metric" to 1.4f, "Now" to 1f, "Prev." to 1f, "Δ" to 0.9f))
         lines.forEachIndexed { idx, l ->
             if (idx > 0) Divider()
@@ -189,40 +209,13 @@ fun ComparisonPanel(stats: Stats, previous: Summary?) {
                 Text(l.label, fontSize = 13.sp, color = Palette.Text, modifier = Modifier.weight(1.4f))
                 Text(l.fmt(l.now), style = NumberStyle.copy(fontSize = 13.sp), modifier = Modifier.weight(1f))
                 Text(l.fmt(l.prev), style = NumberStyle.copy(fontSize = 13.sp, color = Palette.TextDim), modifier = Modifier.weight(1f))
-                Row(Modifier.weight(0.9f)) { Format.delta(l.now, l.prev)?.let { DeltaBadge(it, l.increaseIsBad) } ?: Text("–", style = MetaStyle) }
+                Row(Modifier.weight(0.9f)) {
+                    when {
+                        l.prev == 0L && l.now > 0 -> Text("NEW", style = LabelStyle.copy(fontSize = 9.sp, color = Palette.Accent))
+                        else -> Format.delta(l.now, l.prev)?.let { DeltaBadge(it, l.increaseIsBad) } ?: Text("–", style = MetaStyle)
+                    }
+                }
             }
-        }
-    }
-}
-
-@Composable
-fun CoveragePanel(stats: Stats) {
-    val c = stats.coverage
-    val zone = ZoneId.systemDefault()
-    val df = DateTimeFormatter.ofPattern("d MMM HH:mm")
-    Panel("Data quality", subtitle = "How complete these numbers are") {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (c.elapsedMs > 0) Format.percent(c.ratio) else "–", style = NumberStyle.copy(fontSize = 22.sp, color = if (c.ratio >= 0.95) Palette.Good else Palette.Warn))
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text("TRACKING COVERAGE", style = LabelStyle)
-                Text("${Format.duration(c.trackedMs)} of ${Format.duration(c.elapsedMs)} recorded", style = MetaStyle)
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-        ProportionBar(c.ratio.toFloat(), if (c.ratio >= 0.95) Palette.Good else Palette.Warn, height = 4.dp)
-        val untracked = c.untracked.filter { it.duration > MIN_UNTRACKED_MS }
-        if (untracked.isNotEmpty() || c.dataGaps.isNotEmpty()) Spacer(Modifier.height(10.dp))
-        if (untracked.isNotEmpty()) {
-            DataRow("Tracking off", Format.duration(untracked.sumOf { it.duration }), hint = "${untracked.size} span(s) in this period")
-        }
-        c.dataGaps.take(5).forEach {
-            DataRow(
-                "Data gap",
-                Format.duration(it.end - it.start),
-                hint = df.format(Instant.ofEpochMilli(it.start).atZone(zone)) + " → " + df.format(Instant.ofEpochMilli(it.end).atZone(zone)),
-                valueColor = Palette.Warn,
-            )
         }
     }
 }
@@ -706,4 +699,86 @@ private fun TableHeader(columns: List<Pair<String, Float>>) {
         }
     }
     Divider()
+}
+
+// ---------------------------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------------------------
+
+@Composable
+fun NotificationsPanel(stats: Stats, apps: Map<String, AppInfoEntity>, enabled: Boolean) {
+    if (!enabled) {
+        Panel("Notifications", subtitle = "Not counted") {
+            Text(
+                "Turn on \"Count notifications\" in Settings and grant notification access to see how many " +
+                    "notifications each app sends, when they arrive and how often they pull you into an app.",
+                fontSize = 12.sp, color = Palette.TextDim,
+            )
+        }
+        return
+    }
+    val n = stats.notifications
+    val opened = stats.apps.associateBy { it.packageName }
+    Panel("Notifications", subtitle = "${n.total} received · ${n.byApp.size} apps", contentPadding = PaddingValues(0.dp)) {
+        MetricGrid(
+            listOf(
+                { m -> MetricTile("Per day", "%.1f".format(n.perDay), m, caption = "average") },
+                { m -> MetricTile("Led to opening", Format.percent(n.openedWithin10Min), m, caption = "app opened ≤ 10 min after") },
+                { m -> MetricTile("Per app open", "%.2f".format(n.perLaunch), m, caption = "notifications / launch") },
+                { m -> MetricTile("Busiest hour", n.hourly.indices.maxByOrNull { n.hourly[it] }?.takeIf { n.hourly[it] > 0 }?.let { "${it.toString().padStart(2, '0')}:00" } ?: "–", m, caption = "most notifications") },
+            ),
+        )
+        if (n.total == 0) {
+            EmptyHint("No notifications in this period.", Modifier.padding(horizontal = 14.dp))
+            return@Panel
+        }
+        Divider()
+        Column(Modifier.padding(14.dp)) {
+            val (labels, detail) = bucketLabels(stats)
+            Text("RECEIVED ${unitLabel(stats).uppercase()}", style = LabelStyle.copy(fontSize = 9.sp, color = Palette.TextFaint))
+            BarChart(
+                values = stats.buckets.map { it.notifications.toLong() },
+                labels = labels,
+                detailLabels = detail,
+                format = { "$it" },
+                color = Palette.Amber,
+                highlight = currentBucket(stats),
+                height = 110,
+            )
+            Spacer(Modifier.height(14.dp))
+            Text("BY HOUR OF DAY", style = LabelStyle.copy(fontSize = 9.sp, color = Palette.TextFaint))
+            BarChart(
+                values = n.hourly.map { it.toLong() },
+                labels = (0 until 24).map { it.toString().padStart(2, '0') },
+                detailLabels = (0 until 24).map { "${it.toString().padStart(2, '0')}:00" },
+                format = { "$it" },
+                color = Palette.Amber,
+                height = 90,
+                showFooter = false,
+            )
+        }
+        Divider()
+        Text("BY APP", style = LabelStyle.copy(fontSize = 9.sp, color = Palette.TextFaint), modifier = Modifier.padding(start = 14.dp, top = 12.dp, bottom = 6.dp))
+        val maxN = n.byApp.firstOrNull()?.second ?: 1
+        n.byApp.take(10).forEach { (pkg, count) ->
+            val usage = opened[pkg]
+            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                AppIcon(pkg, 26.dp, label = apps[pkg]?.label)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(apps[pkg]?.label ?: pkg.substringAfterLast('.'), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        Text("$count", style = NumberStyle.copy(fontSize = 13.sp))
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    ProportionBar(count.toFloat() / maxN, Palette.Amber, height = 3.dp)
+                    Text(
+                        if (usage == null) "never opened in this period" else "${usage.launches} opens · %.1f notif. per open".format(count.toDouble() / usage.launches.coerceAtLeast(1)),
+                        style = MetaStyle.copy(fontSize = 10.sp, color = if (usage == null) Palette.Accent else Palette.TextFaint),
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
 }

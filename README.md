@@ -8,7 +8,7 @@ An Android app that records detailed screen time data that built-in tools summar
 - **Statistics tab**: day, week, month, all-time or custom range with ‹ › navigation; filter by apps and category. Four sections:
   - *Overview*: 10 KPIs with change vs. the previous period, trend chart (time or unlocks) with min/avg/max/total and goal line, top apps (donut of shares, per-app sparkline and change vs. the previous period), a period comparison table, and data-quality coverage
   - *Apps*: category mix, stacked "app usage over time" chart (tap a bar for the per-app split of that hour/day/week), and every app with its own mini-dashboard: time, change, share, trend sparkline, opens, average session, peak hour, active days and notifications; sortable by time, opens, notifications or change
-  - *Patterns*: hour-of-day profile, weekday × hour heatmap, weekday averages (weekdays vs. weekend), habits (first/last use, night use, median gap, longest phone-free stretch), session lengths, and goal streaks
+  - *Patterns*: hour-of-day profile, notifications (per day, by hour, by app – including apps never opened –, share that led to opening the app), weekday × hour heatmap, weekday averages (weekdays vs. weekend), habits (first/last use, night use, median gap, longest phone-free stretch), session lengths, and goal streaks
   - *Days*: busiest/quietest day highlights and a daily log (time, unlocks, first and last use, top three apps of each day)
 - **App detail** (tap any app): the same analysis for one app over any day/week/month/all-time/custom range – summary with changes, usage profile (active days, per active day, median and longest session, peak hour, opens per day, notifications per open, first and last use), time/opens trend, period comparison, hour-of-day profile, weekday × hour heatmap, weekday averages, session lengths and a daily log.
 - **Settings**:
@@ -37,6 +37,14 @@ Rendered from sample data by the screenshot tests (`./gradlew :app:testDebugUnit
 Android already records the events needed in its usage log (`UsageStatsManager`): screen on/off, keyguard hidden (unlock), activity resumed/paused, shutdown/startup. The app does **not** run a background service. A periodic WorkManager job (default every 30 minutes, and whenever the app opens) reads only the new events and stores derived sessions in Room. Each run takes milliseconds.
 
 Open sessions are stored provisionally. The next sync re-reads from their start and replaces them (natural primary keys), so re-syncs and imports are idempotent. If the app falls behind the system's retention window, the gap is recorded and shown under "Data quality".
+
+### Data quality
+
+*Tracking coverage* is the share of a period during which tracking was switched on (from the start/stop log), minus any data the system log had already discarded. It does **not** depend on how long the app itself is open: all phone use is read from Android's log on every sync. The *Data quality* panel shows a timeline of the period (on / off / lost), the last sync and how many syncs ran in the last 24 h, and a tracking log (started, stopped, history backfilled, data lost, backup imported).
+
+### Comparisons
+
+While a period is still running (today, this week, …) it is compared with the *same elapsed part* of the previous period, e.g. Monday–Wednesday 14:00 against last Monday–Wednesday 14:00, so a half-finished week doesn't look like a drop.
 
 ## Project layout
 

@@ -10,11 +10,11 @@ import io.github.rudolfhk.screentime.core.RawEvent
  * Reads the system usage log. Android records these events anyway, so polling it in batches
  * costs almost nothing compared to running our own always-on service.
  */
-class UsageEventSource(context: Context) {
+class UsageEventSource(context: Context) : EventSource {
 
     private val usm = context.getSystemService(UsageStatsManager::class.java)
 
-    fun read(from: Long, to: Long): List<RawEvent> {
+    override fun read(from: Long, to: Long): List<RawEvent> {
         if (to <= from) return emptyList()
         val events = usm?.queryEvents(from, to) ?: return emptyList()
         val e = UsageEvents.Event()

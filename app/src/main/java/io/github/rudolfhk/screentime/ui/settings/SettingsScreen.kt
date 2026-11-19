@@ -137,6 +137,7 @@ class SettingsViewModel(private val c: AppContainer) : ViewModel() {
     fun import(uri: Uri) = runTask("Import") {
         val r = c.backup.import(uri)
         c.tracking.refreshAppInfo()
+        if (r.total > 0) c.tracking.logImport(r.total)
         if (r.total == 0) "Nothing new – all records were already present"
         else "Imported ${r.screenSessions} screen sessions, ${r.appSessions} app sessions, ${r.unlocks} unlocks, ${r.notifications} notifications"
     }

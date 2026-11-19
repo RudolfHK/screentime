@@ -82,6 +82,17 @@ object TimeRanges {
         }
     }
 
+    /**
+     * The window of [previous] to compare [current] with. While [current] is still running, only
+     * the same elapsed length of [previous] is used (e.g. Mon–Wed vs. last Mon–Wed), otherwise a
+     * partial period would always look like a big drop.
+     */
+    fun comparablePrevious(current: TimeRange, previous: TimeRange, now: Long): TimeRange {
+        if (now >= current.end || now <= current.start) return previous
+        val elapsed = now - current.start
+        return TimeRange(previous.start, minOf(previous.end, previous.start + elapsed))
+    }
+
     fun granularityFor(range: TimeRange, zone: ZoneId): Granularity {
         val days = ChronoUnit.DAYS.between(localDate(range.start, zone), localDate(range.end - 1, zone)) + 1
         return when {

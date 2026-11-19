@@ -47,7 +47,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -98,7 +100,19 @@ class StatsViewModel(c: AppContainer) : ViewModel() {
     val apps: StateFlow<List<AppInfoEntity>> = c.db.usageDao().apps()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    private var knownToday = LocalDate.now()
+
     fun select(sel: PeriodSelection) = filter.update { it.copy(selection = sel) }
+
+    /** After midnight, a selection that was anchored on "today" moves on to the new day. */
+    fun rollDay() {
+        val today = LocalDate.now()
+        if (today == knownToday) return
+        filter.update { f ->
+            if (f.selection.kind != RangeKind.CUSTOM && f.selection.anchor == knownToday) f.copy(selection = f.selection.copy(anchor = today)) else f
+        }
+        knownToday = today
+    }
     fun setPackages(p: Set<String>?) = filter.update { it.copy(packages = p?.takeIf { s -> s.isNotEmpty() }) }
     fun setCategory(c: Int?) = filter.update { it.copy(category = c) }
 }
@@ -110,6 +124,7 @@ fun StatsScreen(onOpenApp: (String, PeriodSelection) -> Unit) {
     val filter by vm.filter.collectAsStateWithLifecycle()
     val bundle by vm.bundle.collectAsStateWithLifecycle()
     val apps by vm.apps.collectAsStateWithLifecycle()
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.rollDay() }
     StatsContent(
         filter = filter,
         bundle = bundle,
@@ -163,8 +178,8 @@ fun StatsContent(
                             SummaryPanel(st, b.previous, b.settings.countNotifications)
                             TrendPanel(st, goal)
                             TopAppsPanel(st, b.apps, b.previousApps, onOpenApp, onSeeAll = { section = StatsSection.APPS })
-                            ComparisonPanel(st, b.previous)
-                            CoveragePanel(st)
+                            ComparisonPanel(st, b.previous, b.previousRange, b.partialComparison, b.settings.countNotifications)
+                            CoveragePanel(st.coverage, st.range, b.log, b.settings)
                         }
                         StatsSection.APPS -> {
                             if (filter.category == null) CategoryPanel(st, onSelectCategory = onSetCategory)
@@ -174,6 +189,7 @@ fun StatsContent(
                         StatsSection.PATTERNS -> {
                             HourlyPanel(st)
                             HeatmapPanel(st)
+                            NotificationsPanel(st, b.apps, b.settings.countNotifications)
                             WeekdayPanel(st)
                             HabitsPanel(st)
                             SessionLengthPanel(st)

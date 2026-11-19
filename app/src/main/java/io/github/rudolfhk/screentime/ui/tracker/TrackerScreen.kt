@@ -31,7 +31,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LifecycleEventEffect
+import io.github.rudolfhk.screentime.data.LogType
+import io.github.rudolfhk.screentime.ui.stats.syncHealth
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flatMapLatest
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -75,9 +81,15 @@ import java.time.format.DateTimeFormatter
 
 class TrackerViewModel(private val c: AppContainer) : ViewModel() {
     val settings: StateFlow<Settings?> = c.settings.settings.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
-    val today: StateFlow<StatsBundle?> = c.stats
-        .stats(PeriodSelection(RangeKind.DAY, LocalDate.now()), null, null)
+    private val day = MutableStateFlow(LocalDate.now())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val today: StateFlow<StatsBundle?> = day
+        .flatMapLatest { c.stats.stats(PeriodSelection(RangeKind.DAY, it), null, null) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** Switches "today" to the new date after midnight (called on resume). */
+    fun refreshDay() { day.value = LocalDate.now() }
 
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
@@ -104,6 +116,7 @@ fun TrackerScreen(permissions: PermissionState, onOpenApp: (String) -> Unit, onS
     val settings by vm.settings.collectAsStateWithLifecycle()
     val today by vm.today.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshDay() }
     val s = settings ?: return
     TrackerContent(
         settings = s,
@@ -224,10 +237,25 @@ fun TrackerContent(
                 }
 
                 Panel("System status", contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)) {
-                    val cov = st.coverage
-                    DataRow("Coverage today", if (cov.elapsedMs > 0) Format.percent(cov.ratio) else "–", hint = "Share of the day tracking was on")
+                    val health = syncHealth(bundle.log, now)
+                    val since = (bundle.log.firstOrNull { it.type == LogType.STARTED }?.ts ?: s.clipFrom.takeIf { it > 0 })?.takeIf { s.trackingEnabled }
+                    val sinceFmt = DateTimeFormatter.ofPattern("d MMM, HH:mm")
+                    DataRow(
+                        "Tracking",
+                        if (s.trackingEnabled) "on" else "off",
+                        hint = since?.let { "Running since " + sinceFmt.format(java.time.Instant.ofEpochMilli(it).atZone(zone)) }
+                            ?: if (s.trackingEnabled) "Records all phone use, not just this app" else "Nothing is recorded while off",
+                        valueColor = if (s.trackingEnabled) Palette.Good else Palette.TextDim,
+                    )
                     Divider()
-                    DataRow("Data gaps", cov.dataGaps.size.toString(), hint = "System log expired before a sync", valueColor = if (cov.dataGaps.isEmpty()) Palette.Text else Palette.Warn)
+                    DataRow(
+                        "Last sync",
+                        health.lastSync?.let { DateUtils.getRelativeTimeSpanString(it, now, DateUtils.MINUTE_IN_MILLIS).toString() } ?: "never",
+                        hint = "${health.syncs24h} syncs in 24 h · ${health.background24h} in background",
+                    )
+                    Divider()
+                    val gaps = st.coverage.dataGaps
+                    DataRow("Data lost today", if (gaps.isEmpty()) "none" else Format.duration(gaps.sumOf { it.end - it.start }), valueColor = if (gaps.isEmpty()) Palette.Good else Palette.Bad)
                     Divider()
                     DataRow(
                         "Usage access", if (permissions.usageAccess) "granted" else "missing",

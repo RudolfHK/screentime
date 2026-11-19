@@ -33,6 +33,7 @@ object SessionBuilder {
 
         var screenStart: Long? = null
         var unlockAt: Long? = null
+        var implicitUnlock = false
         var currentApp: String? = null
         var appStart = 0L
         var pendingPause: Long? = null
@@ -51,6 +52,7 @@ object SessionBuilder {
             if (at > start) screens += ScreenSession(start, at, unlockAt)
             screenStart = null
             unlockAt = null
+            implicitUnlock = false
         }
 
         for (e in sorted) {
@@ -65,7 +67,8 @@ object SessionBuilder {
                 EventType.UNLOCK -> {
                     unlocks += ts
                     if (screenStart == null) screenStart = ts
-                    if (unlockAt == null) unlockAt = ts
+                    if (unlockAt == null || implicitUnlock) unlockAt = ts
+                    implicitUnlock = false
                 }
                 EventType.APP_RESUMED -> {
                     val pkg = e.packageName ?: continue
@@ -73,6 +76,11 @@ object SessionBuilder {
                         // Log window started mid-session: an app in the foreground implies usage.
                         screenStart = ts
                         unlockAt = ts
+                    } else if (unlockAt == null) {
+                        // Devices without a lock screen never report KEYGUARD_HIDDEN: an app coming to
+                        // the foreground still means the phone is in use. Replaced by a real unlock.
+                        unlockAt = ts
+                        implicitUnlock = true
                     }
                     if (currentApp == pkg) {
                         pendingPause = null // activity switch inside the same app

@@ -40,6 +40,9 @@ android {
         buildConfig = true
     }
 
+    // Room schema JSONs for the migration test (debug builds only; Robolectric reads merged assets).
+    sourceSets.getByName("debug").assets.srcDir("$projectDir/schemas")
+
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
@@ -92,6 +95,7 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.room.testing)
     testImplementation(libs.roborazzi)
     testImplementation(libs.roborazzi.compose)
     testImplementation(libs.androidx.test.ext.junit)

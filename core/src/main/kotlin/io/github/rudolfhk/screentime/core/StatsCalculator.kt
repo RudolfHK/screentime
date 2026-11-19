@@ -69,7 +69,7 @@ data class AppUsage(
 
 data class CategoryUsage(val category: Int, val total: Long, val apps: Int)
 
-data class Bucket(val start: Long, val end: Long, val screenTime: Long, val unlocks: Int, val appTime: Long)
+data class Bucket(val start: Long, val end: Long, val screenTime: Long, val unlocks: Int, val appTime: Long, val notifications: Int = 0)
 
 data class DayHabit(
     val date: LocalDate,
@@ -119,6 +119,20 @@ data class Stats(
     val coverage: Coverage,
     val filtered: Boolean,
     val insights: Insights = Insights(),
+    val notifications: NotificationStats = NotificationStats(),
+)
+
+/** Notification analysis. Includes apps that posted notifications but were never opened. */
+data class NotificationStats(
+    val total: Int = 0,
+    /** (package, count), most first. */
+    val byApp: List<Pair<String, Int>> = emptyList(),
+    val hourly: IntArray = IntArray(24),
+    val perDay: Double = 0.0,
+    /** Share of notifications after which the app was opened within 10 minutes. */
+    val openedWithin10Min: Double = 0.0,
+    /** Notifications per opened app session (all included apps). */
+    val perLaunch: Double = 0.0,
 )
 
 /** Derived day-level analysis for the "Patterns" view. */
@@ -187,10 +201,7 @@ object StatsCalculator {
             if (a.start in r) launches++
         }
         val filtered = q.packages != null || q.category != null
-        val notifications = input.notifications.count {
-            it.timestamp in r && (!filtered || appIncluded(it.packageName, q, input.categories)) &&
-                it.packageName !in q.excluded
-        }
+        val notifications = input.notifications.count { it.timestamp in r && appIncluded(it.packageName, q, input.categories) }
         val trackedDays = trackedDays(input.trackingPeriods, r, q.zone, q.now)
         return Summary(
             screenTime = screenTime,
@@ -239,7 +250,15 @@ object StatsCalculator {
         for (a in includedApps) distribute(a.start, a.end, bounds, bApp)
         for (u in input.unlocks) bucketOf(u, bounds).takeIf { it >= 0 }?.let { bUnlocks[it]++ }
 
-        val buckets = (0 until nb).map { Bucket(bounds[it], bounds[it + 1], bScreen[it], bUnlocks[it], bApp[it]) }
+        // Notifications (also from apps that were never opened).
+        val includedNotifications = input.notifications.filter { it.timestamp in r && appIncluded(it.packageName, q, input.categories) }
+        val bNotif = IntArray(nb)
+        val notifHourly = IntArray(24)
+        for (n in includedNotifications) {
+            bucketOf(n.timestamp, bounds).takeIf { it >= 0 }?.let { bNotif[it]++ }
+            notifHourly[Instant.ofEpochMilli(n.timestamp).atZone(zone).hour]++
+        }
+        val buckets = (0 until nb).map { Bucket(bounds[it], bounds[it + 1], bScreen[it], bUnlocks[it], bApp[it], bNotif[it]) }
 
         // Heatmap & hour-of-day profile (screen time, or app time when a filter is active).
         val heat = Array(7) { LongArray(24) }
@@ -341,8 +360,35 @@ object StatsCalculator {
             avgLastUseMinute = lastUses.takeIf { it.isNotEmpty() }?.average()?.toInt(),
             daysOverGoal = daysOverGoal,
             coverage = coverage(input.trackingPeriods, input.gaps, r, q.now),
+            notifications = notificationStats(includedNotifications, includedApps, notifHourly, days.size),
             filtered = filtered,
             insights = insights,
+        )
+    }
+
+    private fun notificationStats(
+        notifications: List<NotificationEvent>,
+        apps: List<AppSession>,
+        hourly: IntArray,
+        days: Int,
+    ): NotificationStats {
+        if (notifications.isEmpty()) return NotificationStats(hourly = hourly)
+        val startsByPkg = apps.groupBy { it.packageName }.mapValues { (_, l) -> l.map { it.start }.sorted().toLongArray() }
+        val window = 10 * 60_000L
+        val opened = notifications.count { n ->
+            val starts = startsByPkg[n.packageName] ?: return@count false
+            val i = starts.binarySearch(n.timestamp).let { if (it >= 0) it else -it - 1 }
+            i < starts.size && starts[i] - n.timestamp <= window
+        }
+        val launches = apps.size
+        return NotificationStats(
+            total = notifications.size,
+            byApp = notifications.groupingBy { it.packageName }.eachCount().entries
+                .sortedByDescending { it.value }.map { it.key to it.value },
+            hourly = hourly,
+            perDay = if (days > 0) notifications.size.toDouble() / days else 0.0,
+            openedWithin10Min = opened.toDouble() / notifications.size,
+            perLaunch = if (launches > 0) notifications.size.toDouble() / launches else 0.0,
         )
     }
 

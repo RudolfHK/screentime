@@ -200,6 +200,41 @@ class StatsCalculatorTest {
     private fun day0() = day
 
     @Test
+    fun `comparison uses the same elapsed part of the previous period`() {
+        val day = 24 * h
+        val week = TimeRange(d0, d0 + 7 * day)
+        val prev = TimeRange(d0 - 7 * day, d0)
+        // Wednesday noon: compare with last Monday 00:00 – Wednesday 12:00.
+        val now = d0 + 2 * day + 12 * h
+        assertEquals(TimeRange(d0 - 7 * day, d0 - 7 * day + 2 * day + 12 * h), TimeRanges.comparablePrevious(week, prev, now))
+        // Finished periods are compared in full.
+        val older = TimeRange(d0 - 14 * day, d0 - 7 * day)
+        assertEquals(older, TimeRanges.comparablePrevious(prev, older, now))
+    }
+
+    @Test
+    fun `notification stats include apps that were never opened`() {
+        val apps = listOf(AppSession("social", d0 + 10 * h + 2 * m, d0 + 10 * h + 5 * m))
+        val n = listOf(
+            NotificationEvent("social", d0 + 10 * h),          // opened 2 min later
+            NotificationEvent("social", d0 + 15 * h),          // not opened
+            NotificationEvent("bank", d0 + 15 * h + m),        // app never used
+            NotificationEvent("launcher", d0 + 16 * h),        // excluded
+        )
+        val q = query().copy(excluded = setOf("launcher"))
+        val s = StatsCalculator.calculate(input(emptyList(), apps, notifications = n), q)
+        val ns = s.notifications
+        assertEquals(3, ns.total)
+        assertEquals(3, s.summary.notifications)
+        assertEquals(listOf("social" to 2, "bank" to 1), ns.byApp)
+        assertEquals(1, ns.hourly[10])
+        assertEquals(2, ns.hourly[15])
+        assertEquals(1.0 / 3, ns.openedWithin10Min, 1e-9)
+        assertEquals(3, s.buckets.sumOf { it.notifications })
+        assertEquals(3.0, ns.perLaunch, 1e-9)
+    }
+
+    @Test
     fun `per-app breakdown over time`() {
         val day = 24 * h
         val apps = listOf(

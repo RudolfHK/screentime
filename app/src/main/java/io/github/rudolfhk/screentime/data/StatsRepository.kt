@@ -33,6 +33,12 @@ data class StatsBundle(
     val apps: Map<String, AppInfoEntity>,
     val settings: Settings,
     val firstTrackedAt: Long?,
+    /** The window the comparison numbers come from. */
+    val previousRange: TimeRange? = null,
+    /** True when the current period is still running and only its elapsed part is compared. */
+    val partialComparison: Boolean = false,
+    /** Tracking log: start/stop/backfill/gaps (all time) and syncs of the last 30 days, newest first. */
+    val log: List<TrackingLogEntity> = emptyList(),
     /** Time per app in the previous period, for per-app change badges. */
     val previousApps: Map<String, Long> = emptyMap(),
     /** Screen sessions (start, end, unlocked) – only filled for single-day ranges. */
@@ -66,7 +72,8 @@ class StatsRepository(private val db: AppDatabase, private val settingsStore: Se
                 val range = TimeRanges.resolve(selection, zone, cfg.firstTrackedAt ?: now, now)
                 val prevRange = TimeRanges.previous(selection)?.let { TimeRanges.resolve(it, zone, cfg.firstTrackedAt ?: now, now) }
                 val from = minOf(range.start, prevRange?.start ?: range.start)
-                inputFlow(from, range.end).map { (input, apps) ->
+                combine(inputFlow(from, range.end), dao.log(now - LOG_SYNC_WINDOW_MS)) { data, log -> data to log }.map { (data, log) ->
+                    val (input, apps) = data
                     val q = StatsQuery(
                         range = range,
                         zone = zone,
@@ -76,11 +83,16 @@ class StatsRepository(private val db: AppDatabase, private val settingsStore: Se
                         excluded = cfg.excluded,
                         dailyGoalMs = cfg.goalMinutes * 60_000L,
                     )
+                    // Like-for-like: a running period is compared with the same elapsed part of the previous one.
+                    val compareRange = prevRange?.let { TimeRanges.comparablePrevious(range, it, q.now) }
                     StatsBundle(
                         selection = selection,
                         stats = StatsCalculator.calculate(input, q),
-                        previous = prevRange?.let { StatsCalculator.summarize(input, q.copy(range = it)) },
-                        previousApps = prevRange?.let { StatsCalculator.appTotals(input, q.copy(range = it)) } ?: emptyMap(),
+                        previous = compareRange?.let { StatsCalculator.summarize(input, q.copy(range = it)) },
+                        previousApps = compareRange?.let { StatsCalculator.appTotals(input, q.copy(range = it)) } ?: emptyMap(),
+                        previousRange = compareRange,
+                        partialComparison = compareRange != null && compareRange != prevRange,
+                        log = log,
                         apps = apps,
                         settings = cfg.settings,
                         firstTrackedAt = cfg.firstTrackedAt,
@@ -141,6 +153,10 @@ class StatsRepository(private val db: AppDatabase, private val settingsStore: Se
             input,
             StatsQuery(range, zone, now, excluded = s.excludedPackages, dailyGoalMs = s.dailyGoalMinutes * 60_000L),
         )
+    }
+
+    companion object {
+        private const val LOG_SYNC_WINDOW_MS = 30 * 86_400_000L
     }
 
     private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
